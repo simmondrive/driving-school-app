@@ -4,18 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>DrivePro - ניהול מורה נהיגה</title>
-    <!-- ספריות חיצוניות -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-
+    
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getFirestore, collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // ה-CONFIG שלך כבר בפנים:
         const firebaseConfig = {
             apiKey: "AIzaSyBVTYYZJdA8sysWRjdK9mRIsndqo-p31s4",
             authDomain: "drivingapp-d231f.firebaseapp.com",
@@ -30,6 +27,10 @@
         window.db = db;
         window.fs = { collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc };
     </script>
+    <style>
+        input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    </style>
 </head>
 <body class="bg-slate-950 min-h-screen text-slate-200 overflow-x-hidden font-sans">
     <div id="root"></div>
@@ -37,21 +38,18 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // הגדרת קוד הגישה (PIN)
         const SECRET_PIN = "1234"; 
 
         function App() {
             const [isAuthenticated, setIsAuthenticated] = useState(false);
-            const [pinInput, setPinInput] = useState('');
+            const [view, setView] = useState('main'); // main, add-student, student-details
             const [students, setStudents] = useState([]);
-            const [schedule, setSchedule] = useState([]);
-            const [view, setView] = useState('main'); // 'main', 'student-details', 'schedule'
+            const [allTransactions, setAllTransactions] = useState([]);
+            const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
             const [selectedStudent, setSelectedStudent] = useState(null);
-            const [loading, setLoading] = useState(true);
-
-            // טפסים
-            const [name, setName] = useState('');
-            const [phone, setPhone] = useState('');
+            
+            // טופס תלמיד חדש
+            const [newStudent, setNewStudent] = useState({ name: '', idNum: '', dob: '', address: '', phone: '' });
 
             useEffect(() => {
                 if (window.db && isAuthenticated) {
@@ -60,193 +58,157 @@
             }, [isAuthenticated]);
 
             const loadData = async () => {
-                setLoading(true);
-                // טעינת תלמידים
                 const qS = window.fs.query(window.fs.collection(window.db, "students"), window.fs.orderBy("name"));
                 const snapS = await window.fs.getDocs(qS);
                 setStudents(snapS.docs.map(d => ({ id: d.id, ...d.data() })));
                 
-                // טעינת יומן שיעורים מכל התלמידים
-                const qL = window.fs.query(window.fs.collection(window.db, "transactions"), window.fs.where("type", "==", "lesson"), window.fs.orderBy("date", "desc"));
+                const qL = window.fs.query(window.fs.collection(window.db, "transactions"), window.fs.orderBy("date", "desc"));
                 const snapL = await window.fs.getDocs(qL);
-                setSchedule(snapL.docs.map(d => ({ id: d.id, ...d.data() })));
-                
-                setLoading(false);
+                setAllTransactions(snapL.docs.map(d => ({ id: d.id, ...d.data() })));
             };
 
-            const addStudent = async () => {
-                if(!name) return alert("הזן שם תלמיד");
+            const handleAddStudent = async () => {
+                if(!newStudent.name) return alert("שם הוא שדה חובה");
                 await window.fs.addDoc(window.fs.collection(window.db, "students"), {
-                    name, phone, balance: 0, lessons: 0
+                    ...newStudent, balance: 0, lessons: 0
                 });
-                setName(''); setPhone(''); loadData();
+                setNewStudent({ name: '', idNum: '', dob: '', address: '', phone: '' });
+                setView('main');
+                loadData();
             };
 
-            const createLesson = async () => {
-                const price = prompt("מחיר שיעור?", "200");
-                const dateTime = prompt("הזן תאריך ושעה (לדוגמה 2024-05-10 14:00)", ""); 
-                if(!price || !dateTime) return;
-
-                const lessonDate = new Date(dateTime.replace(' ', 'T'));
-                if(isNaN(lessonDate)) return alert("פורמט תאריך לא תקין. השתמש ב: YYYY-MM-DD HH:MM");
-
-                const status = lessonDate > new Date() ? 'upcoming' : 'completed';
-
+            const handleAddLesson = async (studentId, studentName) => {
+                const amount = prompt("מחיר שיעור?", "200");
+                const dateTime = prompt("בחר תאריך ושעה (לדוגמה: 2024-05-10 14:00)", ""); 
+                if(!amount || !dateTime) return;
+                
+                const isoDate = new Date(dateTime.replace(' ', 'T')).toISOString();
                 await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
-                    studentId: selectedStudent.id,
-                    studentName: selectedStudent.name,
-                    type: 'lesson',
-                    amount: Number(price),
-                    date: lessonDate.toISOString(),
-                    status: status,
-                    cancelReason: ''
+                    studentId, studentName, type: 'lesson', amount: Number(amount), date: isoDate, status: new Date(isoDate) > new Date() ? 'upcoming' : 'completed'
                 });
-
-                if(status === 'completed') {
-                    await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), {
-                        balance: window.fs.increment(Number(price)),
+                if(new Date(isoDate) <= new Date()) {
+                    await window.fs.updateDoc(window.fs.doc(window.db, "students", studentId), {
+                        balance: window.fs.increment(Number(amount)),
                         lessons: window.fs.increment(1)
                     });
                 }
                 loadData();
-                setView('main');
             };
 
-            const createPayment = async () => {
-                const amount = prompt("סכום ששולם?");
-                const method = prompt("אמצעי תשלום (מזומן/ביט/העברה/אשראי)?", "ביט");
+            const handleAddPayment = async (studentId) => {
+                const amount = prompt("סכום תשלום?");
                 if(!amount) return;
-
+                const method = prompt("סוג תשלום: 1-מזומן, 2-אשראי, 3-ביט, 4-העברה, 5-שיק", "3");
+                const methods = {"1":"מזומן", "2":"אשראי", "3":"ביט", "4":"העברה", "5":"שיק"};
+                
                 await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
-                    studentId: selectedStudent.id,
-                    type: 'payment',
-                    amount: Number(amount),
-                    method: method,
-                    date: new Date().toISOString()
+                    studentId, type: 'payment', amount: Number(amount), date: new Date().toISOString(), method: methods[method] || "מזומן"
                 });
-
-                await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), {
+                await window.fs.updateDoc(window.fs.doc(window.db, "students", studentId), {
                     balance: window.fs.increment(-Number(amount))
                 });
                 loadData();
-                setView('main');
             };
 
-            const cancelLesson = async (lesson) => {
-                const reason = prompt("סיבת הביטול?");
-                if(reason === null) return;
-                await window.fs.updateDoc(window.fs.doc(window.db, "transactions", lesson.id), {
-                    status: 'cancelled',
-                    cancelReason: reason
-                });
-                loadData();
-            };
-
-            if (!isAuthenticated) {
+            // רכיב יומן פשוט
+            const CalendarHeader = () => {
+                const lessonsToday = allTransactions.filter(t => t.type === 'lesson' && t.date.split('T')[0] === selectedDate);
                 return (
-                    <div className="flex flex-col items-center justify-center h-screen bg-slate-950 text-white p-6">
-                        <div className="text-6xl mb-8">🚗</div>
-                        <h1 className="text-2xl font-bold mb-4 italic tracking-widest uppercase text-blue-400">DrivePro Access</h1>
-                        <input type="password" 
-                               className="bg-slate-900 text-white text-center text-4xl tracking-[0.5em] p-5 rounded-3xl w-full max-w-xs border-2 border-blue-500/30 focus:border-blue-500 outline-none transition-all shadow-2xl shadow-blue-500/20"
-                               placeholder="****"
-                               maxLength="4"
-                               autoFocus
-                               onChange={(e) => {
-                                   setPinInput(e.target.value);
-                                   if(e.target.value === SECRET_PIN) setIsAuthenticated(true);
-                               }} />
-                        <p className="mt-8 text-slate-500 text-sm italic">מערכת ניהול מאובטחת</p>
-                    </div>
-                );
-            }
-
-            if (view === 'schedule') {
-                return (
-                    <div className="p-4 max-w-md mx-auto pb-24">
-                        <button onClick={() => setView('main')} className="mb-6 font-bold text-blue-400 flex items-center gap-1"><span>←</span> חזרה לתלמידים</button>
-                        <h2 className="text-3xl font-black mb-6 text-slate-100">🗓️ יומן שיעורים</h2>
-                        <div className="space-y-4">
-                            {schedule.map(l => (
-                                <div key={l.id} className={`p-5 rounded-3xl bg-slate-900 shadow-sm border-r-8 ${l.status === 'upcoming' ? 'border-blue-500' : l.status === 'cancelled' ? 'border-red-400 opacity-60' : 'border-emerald-500'}`}>
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <div className="font-bold text-lg text-slate-100">{l.studentName}</div>
-                                            <div className="text-sm font-medium text-slate-400">
-                                                {new Date(l.date).toLocaleDateString('he-IL', {weekday: 'long', day: 'numeric', month: 'numeric'})}
-                                                <span className="mx-1 text-slate-600">|</span>
-                                                {new Date(l.date).toLocaleTimeString('he-IL', {hour: '2-digit', minute: '2-digit'})}
-                                            </div>
-                                            {l.cancelReason && <div className="mt-2 text-xs bg-red-900/20 text-red-400 p-2 rounded-lg italic">סיבת ביטול: {l.cancelReason}</div>}
-                                        </div>
-                                        <div className="flex flex-col gap-2">
-                                            {l.status === 'upcoming' && (
-                                                <button onClick={() => cancelLesson(l)} className="bg-red-900/30 text-red-400 text-[10px] font-bold py-1 px-3 rounded-full border border-red-900/50 uppercase tracking-tighter">ביטול</button>
-                                            )}
-                                            <div className={`text-xs font-bold px-2 py-1 rounded-full text-center ${l.status === 'upcoming' ? 'bg-blue-900/30 text-blue-400' : l.status === 'cancelled' ? 'bg-red-900/30 text-red-400' : 'bg-emerald-900/30 text-emerald-400'}`}>
-                                                {l.status === 'upcoming' ? 'עתידי' : l.status === 'cancelled' ? 'בוטל' : 'בוצע'}
-                                            </div>
-                                        </div>
-                                    </div>
+                    <div className="bg-slate-900 p-4 rounded-3xl mb-6 border border-slate-800">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="font-bold">לו"ז שיעורים</h3>
+                            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="bg-slate-800 p-1 rounded text-sm outline-none border border-slate-700" />
+                        </div>
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                            {lessonsToday.length > 0 ? lessonsToday.map(l => (
+                                <div key={l.id} className="text-xs flex justify-between bg-slate-800 p-2 rounded-xl">
+                                    <span>{l.studentName}</span>
+                                    <span className="text-blue-400 font-bold">{new Date(l.date).toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit'})}</span>
                                 </div>
-                            ))}
-                            {schedule.length === 0 && <div className="text-center text-slate-500 py-12 italic">אין שיעורים מתוזמנים</div>}
+                            )) : <p className="text-center text-slate-500 text-xs py-2">אין שיעורים ליום זה</p>}
                         </div>
                     </div>
                 );
-            }
+            };
+
+            if (!isAuthenticated) return (
+                <div className="flex flex-col items-center justify-center h-screen bg-slate-950 text-white p-6 text-center">
+                    <h1 className="text-4xl font-black mb-8 text-indigo-500 italic">DRIVE PRO</h1>
+                    <input type="password" placeholder="קוד גישה" className="bg-slate-900 border-2 border-indigo-500 text-white text-center text-4xl p-4 rounded-3xl w-full max-w-xs outline-none"
+                           onChange={(e) => e.target.value === SECRET_PIN && setIsAuthenticated(true)} />
+                </div>
+            );
+
+            if (view === 'add-student') return (
+                <div className="p-6 max-w-md mx-auto">
+                    <button onClick={() => setView('main')} className="mb-6 text-blue-400 font-bold">← ביטול</button>
+                    <h2 className="text-2xl font-black mb-6 text-slate-100 font-bold">הוספת תלמיד חדש</h2>
+                    <div className="space-y-4">
+                        <input className="w-full p-4 bg-slate-900 rounded-2xl outline-none" placeholder="שם מלא *" value={newStudent.name} onChange={e=>setNewStudent({...newStudent, name: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 rounded-2xl outline-none" placeholder="תעודת זהות" value={newStudent.idNum} onChange={e=>setNewStudent({...newStudent, idNum: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 rounded-2xl outline-none" type="date" placeholder="תאריך לידה" value={newStudent.dob} onChange={e=>setNewStudent({...newStudent, dob: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 rounded-2xl outline-none" placeholder="כתובת" value={newStudent.address} onChange={e=>setNewStudent({...newStudent, address: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 rounded-2xl outline-none" placeholder="טלפון" type="tel" value={newStudent.phone} onChange={e=>setNewStudent({...newStudent, phone: e.target.value})} />
+                        <button className="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold mt-4" onClick={handleAddStudent}>אישור ושמירה</button>
+                    </div>
+                </div>
+            );
+
+            if (view === 'student-details' && selectedStudent) return (
+                <div className="p-6 max-w-md mx-auto">
+                    <button onClick={() => setView('main')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
+                    <div className="bg-slate-900 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl mb-6">
+                        <h2 className="text-3xl font-black text-white mb-4">{selectedStudent.name}</h2>
+                        <div className="space-y-2 text-slate-400 text-sm mb-6">
+                            <p>🆔 ת"ז: {selectedStudent.idNum || '---'}</p>
+                            <p>📅 לידה: {selectedStudent.dob || '---'}</p>
+                            <p>🏠 כתובת: {selectedStudent.address || '---'}</p>
+                            <p>📞 טלפון: {selectedStudent.phone || '---'}</p>
+                        </div>
+                        <div className="flex justify-between border-t border-slate-800 pt-4">
+                            <div className="text-center flex-1">
+                                <p className="text-[10px] text-slate-500 uppercase">חוב</p>
+                                <p className={`text-xl font-bold ${selectedStudent.balance > 0 ? 'text-red-500' : 'text-emerald-500'}`}>₪{selectedStudent.balance}</p>
+                            </div>
+                            <div className="text-center flex-1">
+                                <p className="text-[10px] text-slate-500 uppercase">שיעורים</p>
+                                <p className="text-xl font-bold text-slate-100">{selectedStudent.lessons}</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex gap-4">
+                        <button onClick={() => handleAddLesson(selectedStudent.id, selectedStudent.name)} className="flex-1 bg-blue-600 text-white py-3 rounded-2xl font-bold">+ שיעור</button>
+                        <button onClick={() => handleAddPayment(selectedStudent.id)} className="flex-1 bg-emerald-600 text-white py-3 rounded-2xl font-bold">₪ תשלום</button>
+                    </div>
+                </div>
+            );
 
             return (
                 <div className="p-4 max-w-md mx-auto pb-28">
-                    <header className="flex justify-between items-center mb-8 pt-4">
-                        <div>
-                            <h1 className="text-3xl font-black text-slate-100 tracking-tight italic">DRIVE<span className="text-blue-500">PRO</span></h1>
-                            <p className="text-xs font-bold text-slate-500 tracking-widest uppercase">Instructor Panel</p>
+                    <header className="flex justify-between items-center mb-6 pt-4 px-2">
+                        <h1 className="text-2xl font-black text-slate-100 tracking-tight italic">DRIVE<span className="text-blue-500">PRO</span></h1>
+                        <div className="text-xs font-bold text-slate-500 bg-slate-900 px-3 py-1 rounded-full border border-slate-800">
+                             חוב כולל: ₪{students.reduce((a,b)=>a+(b.balance||0),0)}
                         </div>
-                        <button onClick={() => setView('schedule')} className="bg-blue-600 text-white w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-900/20 active:scale-90 transition-transform">
-                            <span className="text-2xl">🗓️</span>
-                        </button>
                     </header>
 
-                    {/* קופה מהירה */}
-                    <div className="bg-slate-900 p-6 rounded-[2rem] shadow-sm border border-slate-800 mb-8 flex justify-between items-center">
-                        <div>
-                            <div className="text-xs font-bold text-slate-500 uppercase tracking-tighter">יתרה כוללת לקבלה</div>
-                            <div className="text-3xl font-black text-slate-100">₪{students.reduce((a,b)=>a+(b.balance||0),0)}</div>
-                        </div>
-                        <div className="w-12 h-12 bg-emerald-900/20 rounded-full flex items-center justify-center text-emerald-500 font-bold text-xl italic">₪</div>
+                    <CalendarHeader />
+
+                    <div className="flex gap-4 mb-8">
+                        <button onClick={() => setView('add-student')} className="flex-1 bg-slate-900 text-white p-4 rounded-[1.8rem] border border-slate-800 font-bold shadow-lg flex items-center justify-center gap-2 transition-active active:scale-95">
+                            <span className="text-xl text-blue-500">+</span> הוספת תלמיד
+                        </button>
                     </div>
 
-                    <div className="bg-slate-900 p-6 rounded-[2.5rem] shadow-md border border-slate-800 mb-10">
-                        <h3 className="font-black text-lg mb-4 text-slate-100">תלמיד חדש</h3>
-                        <div className="flex gap-2">
-                            <input className="flex-1 p-4 bg-slate-800 text-white border-none rounded-2xl outline-none focus:ring-2 ring-blue-500 transition-all font-medium" 
-                                   placeholder="שם מלא..." value={name} onChange={e=>setName(e.target.value)} />
-                            <button className="bg-blue-600 text-white px-6 rounded-2xl font-bold shadow-lg shadow-blue-900/20" onClick={addStudent}>+</button>
-                        </div>
-                    </div>
-
-                    <div className="space-y-5">
-                        <div className="flex justify-between items-center px-2">
-                            <h3 className="font-black text-slate-500 text-xs uppercase tracking-widest">תלמידים פעילים</h3>
-                            <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-bold">{students.length}</span>
-                        </div>
+                    <div className="space-y-4">
+                        <h3 className="font-bold text-slate-500 text-xs uppercase px-2">רשימת תלמידים</h3>
                         {students.map(s => (
-                            <div key={s.id} className="bg-slate-900 p-6 rounded-[2rem] shadow-sm border border-slate-800 transition-all relative overflow-hidden group">
-                                <div className="flex justify-between items-start relative z-10">
-                                    <div>
-                                        <h3 className="font-black text-xl text-slate-100 mb-1">{s.name}</h3>
-                                        <p className="text-slate-500 text-xs font-bold">{s.phone || 'ללא טלפון'}</p>
-                                    </div>
-                                    <div className={`text-2xl font-black italic ${s.balance > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-                                        ₪{s.balance || 0}
-                                    </div>
+                            <div key={s.id} onClick={() => {setSelectedStudent(s); setView('student-details');}} className="bg-slate-900 p-5 rounded-[2rem] border border-slate-800 flex justify-between items-center transition-all active:scale-95">
+                                <div>
+                                    <div className="font-bold text-slate-100">{s.name}</div>
+                                    <div className="text-[10px] text-slate-500">{s.phone}</div>
                                 </div>
-                                <div className="mt-6 flex gap-2 relative z-10">
-                                    <button onClick={()=>{setSelectedStudent(s); createLesson();}} className="flex-1 bg-slate-800 text-white py-3 border border-slate-700 rounded-2xl text-[11px] font-bold uppercase tracking-tight active:scale-95 transition-all">קביעת שיעור</button>
-                                    <button onClick={()=>{setSelectedStudent(s); createPayment();}} className="flex-1 bg-emerald-600 text-white py-3 rounded-2xl text-[11px] font-bold uppercase tracking-tight active:scale-95 transition-all shadow-lg shadow-emerald-900/20">הזנת תשלום</button>
-                                </div>
-                                <div className="absolute right-0 bottom-0 w-24 h-24 bg-slate-800 rounded-full translate-x-10 translate-y-10 group-hover:scale-150 transition-transform duration-700 opacity-30"></div>
+                                <div className={`font-black italic ${s.balance > 0 ? 'text-red-500' : 'text-emerald-500'}`}>₪{s.balance}</div>
                             </div>
                         ))}
                     </div>
