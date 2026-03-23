@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ניהול תלמידי נהיגה</title>
+    <!-- ספריות חיצוניות -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy, doc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+      const firebaseConfig = {
+
+        apiKey: "AIzaSyBVTYYZJdA8sysWRjdK9mRIsndqo-p31s4",
+        authDomain: "drivingapp-d231f.firebaseapp.com",
+        projectId: "drivingapp-d231f",
+        storageBucket: "drivingapp-d231f.firebasestorage.app",
+        messagingSenderId: "235953243839",
+        appId: "1:235953243839:web:3facef57e16212f0fae80a"
+      };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        
+        // הפיכת הפונקציות לזמינות ל-React
+        window.db = db;
+        window.fs = { collection, addDoc, getDocs, query, orderBy, doc, updateDoc, increment };
+    </script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function App() {
+            const [students, setStudents] = useState([]);
+            const [name, setName] = useState('');
+            const [phone, setPhone] = useState('');
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                if (window.db) loadStudents();
+                else setTimeout(loadStudents, 1000);
+            }, []);
+
+            const loadStudents = async () => {
+                try {
+                    const q = window.fs.query(window.fs.collection(window.db, "students"), window.fs.orderBy("name"));
+                    const snap = await window.fs.getDocs(q);
+                    setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    setLoading(false);
+                } catch (e) { console.error(e); }
+            };
+
+            const addStudent = async () => {
+                if(!name || !phone) return alert("מלא פרטים");
+                await window.fs.addDoc(window.fs.collection(window.db, "students"), {
+                    name, phone, balance: 0, lessons: 0
+                });
+                setName(''); setPhone(''); loadStudents();
+            };
+
+            const updateAmount = async (student, amount, isLesson) => {
+                const sRef = window.fs.doc(window.db, "students", student.id);
+                await window.fs.updateDoc(sRef, {
+                    balance: window.fs.increment(amount),
+                    lessons: isLesson ? window.fs.increment(1) : window.fs.increment(0)
+                });
+                loadStudents();
+            };
+
+            const downloadPDF = (student) => {
+                const doc = new jspdf.jsPDF();
+                doc.text(`Student: ${student.name}`, 10, 10);
+                doc.text(`Phone: ${student.phone}`, 10, 20);
+                doc.text(`Lessons: ${student.lessons}`, 10, 30);
+                doc.text(`Balance: ${student.balance} NIS`, 10, 40);
+                doc.save(`${student.name}.pdf`);
+            };
+
+            return (
+                <div class="max-w-md mx-auto p-4 pb-20">
+                    <h1 class="text-2xl font-bold text-center mb-6 text-blue-900">🚗 ניהול תלמידים</h1>
+                    
+                    {/* טופס הוספה */}
+                    <div class="bg-white p-5 rounded-2xl shadow-lg mb-8 border border-blue-100">
+                        <input class="w-full mb-3 p-3 bg-gray-50 border rounded-xl" placeholder="שם מלא" value={name} onChange={e=>setName(e.target.value)} />
+                        <input class="w-full mb-4 p-3 bg-gray-50 border rounded-xl" placeholder="טלפון" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} />
+                        <button class="w-full bg-blue-600 text-white p-3 rounded-xl font-bold shadow-md active:bg-blue-700" onClick={addStudent}>+ הוסף תלמיד חדש</button>
+                    </div>
+
+                    {/* רשימת תלמידים */}
+                    {loading ? <p class="text-center">טוען נתונים...</p> : (
+                        <div class="space-y-4">
+                            {students.map(s => (
+                                <div key={s.id} class="bg-white p-5 rounded-2xl shadow-md border-r-8 border-blue-500 flex justify-between items-center">
+                                    <div class="flex-1">
+                                        <h3 class="font-bold text-xl text-gray-800">{s.name}</h3>
+                                        <p class="text-gray-500 mb-2">📞 {s.phone}</p>
+                                        <div class="flex gap-2">
+                                            <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-bold">שיעורים: {s.lessons}</span>
+                                        </div>
+                                    </div>
+                                    <div class="text-left">
+                                        <div class={`text-2xl font-black mb-3 ${s.balance > 0 ? 'text-red-500' : 'text-green-600'}`}>₪{s.balance}</div>
+                                        <div class="flex gap-2">
+                                            <button onClick={() => {const p = prompt("מחיר שיעור?","200"); if(p) updateAmount(s, Number(p), true)}} class="bg-green-500 text-white p-2 rounded-lg text-xs font-bold">➕ שיעור</button>
+                                            <button onClick={() => {const p = prompt("סכום תשלום?","200"); if(p) updateAmount(s, -Number(p), false)}} class="bg-yellow-500 text-white p-2 rounded-lg text-xs font-bold">💰 תשלום</button>
+                                            <button onClick={() => downloadPDF(s)} class="bg-gray-200 p-2 rounded-lg text-xs">📄</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
