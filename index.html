@@ -3,19 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DrivePro - ניהול מורה נהיגה</title>
-    <!-- ספריות חיצוניות -->
+    <title>DrivePro Elite v4.0</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-
+    
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // ה-CONFIG שלך כבר בפנים:
         const firebaseConfig = {
             apiKey: "AIzaSyBVTYYZJdA8sysWRjdK9mRIsndqo-p31s4",
             authDomain: "drivingapp-d231f.firebaseapp.com",
@@ -28,227 +25,200 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         window.db = db;
-        window.fs = { collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc };
+        window.fs = { collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc, getDoc };
     </script>
 </head>
-<body class="bg-slate-50 min-h-screen text-slate-900 overflow-x-hidden font-sans">
+<body class="bg-[#0f172a] text-slate-200 min-h-screen font-sans">
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // הגדרת קוד הגישה (PIN)
-        const SECRET_PIN = "1234"; 
+        const SECRET_PIN = "1234";
 
         function App() {
             const [isAuthenticated, setIsAuthenticated] = useState(false);
-            const [pinInput, setPinInput] = useState('');
+            const [view, setView] = useState('main'); // 'main', 'details', 'schedule'
             const [students, setStudents] = useState([]);
-            const [schedule, setSchedule] = useState([]);
-            const [view, setView] = useState('main'); // 'main', 'student-details', 'schedule'
             const [selectedStudent, setSelectedStudent] = useState(null);
-            const [loading, setLoading] = useState(true);
-
-            // טפסים
-            const [name, setName] = useState('');
-            const [phone, setPhone] = useState('');
+            const [transactions, setTransactions] = useState([]);
+            const [loading, setLoading] = useState(false);
 
             useEffect(() => {
-                if (window.db && isAuthenticated) {
-                    loadData();
-                }
+                if (isAuthenticated) loadStudents();
             }, [isAuthenticated]);
 
-            const loadData = async () => {
+            const loadStudents = async () => {
+                const q = window.fs.query(window.fs.collection(window.db, "students"), window.fs.orderBy("name"));
+                const snap = await window.fs.getDocs(q);
+                setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            };
+
+            const loadStudentData = async (student) => {
                 setLoading(true);
-                // טעינת תלמידים
-                const qS = window.fs.query(window.fs.collection(window.db, "students"), window.fs.orderBy("name"));
-                const snapS = await window.fs.getDocs(qS);
-                setStudents(snapS.docs.map(d => ({ id: d.id, ...d.data() })));
-                
-                // טעינת יומן שיעורים מכל התלמידים
-                const qL = window.fs.query(window.fs.collection(window.db, "transactions"), window.fs.where("type", "==", "lesson"), window.fs.orderBy("date", "desc"));
-                const snapL = await window.fs.getDocs(qL);
-                setSchedule(snapL.docs.map(d => ({ id: d.id, ...d.data() })));
-                
+                const q = window.fs.query(window.fs.collection(window.db, "transactions"), 
+                    window.fs.where("studentId", "==", student.id), window.fs.orderBy("date", "desc"));
+                const snap = await window.fs.getDocs(q);
+                setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setSelectedStudent(student);
+                setView('details');
                 setLoading(false);
             };
 
-            const addStudent = async () => {
-                if(!name) return alert("הזן שם תלמיד");
+            const handleAddStudent = async () => {
+                const name = prompt("שם מלא:");
+                const phone = prompt("טלפון:");
+                const idNum = prompt("מספר ת"ז:");
+                const address = prompt("כתובת:");
+                if(!name) return;
                 await window.fs.addDoc(window.fs.collection(window.db, "students"), {
-                    name, phone, balance: 0, lessons: 0
+                    name, phone, idNum, address, balance: 0, actualLessons: 0, 
+                    internalTest: 'טרם', externalTest: 'טרם'
                 });
-                setName(''); setPhone(''); loadData();
+                loadStudents();
             };
 
-            const createLesson = async () => {
-                const price = prompt("מחיר שיעור?", "200");
-                const dateTime = prompt("הזן תאריך ושעה (לדוגמה 2024-05-10 14:00)", ""); // במציאות עדיף DatePicker, כאן נשתמש בפורמט פשוט
-                if(!price || !dateTime) return;
+            const handleAddLesson = async () => {
+                const dateStr = prompt("תאריך ושעה (פורמט: YYYY-MM-DDTHH:MM)", new Date().toISOString().slice(0,16));
+                const duration = prompt("משך המפגש בדקות? (60 דקות = 1.5 שיעורים)", "60");
+                const price = prompt("מחיר המפגש?", "200");
+                if(!dateStr || !price) return;
 
-                const lessonDate = new Date(dateTime.replace(' ', 'T'));
-                if(isNaN(lessonDate)) return alert("פורמט תאריך לא תקין. השתמש ב: YYYY-MM-DD HH:MM");
-
-                const status = lessonDate > new Date() ? 'upcoming' : 'completed';
+                const lessonsCount = (Number(duration) / 60) * 1.5;
+                const isFuture = new Date(dateStr) > new Date();
 
                 await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
                     studentId: selectedStudent.id,
-                    studentName: selectedStudent.name,
                     type: 'lesson',
+                    date: dateStr,
                     amount: Number(price),
-                    date: lessonDate.toISOString(),
-                    status: status,
-                    cancelReason: ''
+                    lessonsCount: lessonsCount,
+                    status: isFuture ? 'upcoming' : 'completed'
                 });
 
-                if(status === 'completed') {
+                if(!isFuture) {
                     await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), {
                         balance: window.fs.increment(Number(price)),
-                        lessons: window.fs.increment(1)
+                        actualLessons: window.fs.increment(lessonsCount)
                     });
                 }
-                loadData();
-                setView('main');
+                loadStudentData(selectedStudent);
             };
 
-            const createPayment = async () => {
-                const amount = prompt("סכום ששולם?");
-                const method = prompt("אמצעי תשלום (מזומן/ביט/העברה/אשראי)?", "ביט");
+            const handleAddPayment = async () => {
+                const amount = prompt("סכום תשלום:");
                 if(!amount) return;
-
+                const method = prompt("אמצעי תשלום (1-מזומן, 2-ביט, 3-העברה, 4-צ'ק, 5-אשראי):", "2");
+                const methods = { "1": "מזומן", "2": "ביט", "3": "העברה", "4": "צ'ק", "5": "אשראי" };
+                
                 await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
                     studentId: selectedStudent.id,
                     type: 'payment',
+                    date: new Date().toISOString(),
                     amount: Number(amount),
-                    method: method,
-                    date: new Date().toISOString()
+                    method: methods[method] || "ביט"
                 });
 
                 await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), {
                     balance: window.fs.increment(-Number(amount))
                 });
-                loadData();
-                setView('main');
+                loadStudentData(selectedStudent);
             };
 
-            const cancelLesson = async (lesson) => {
-                const reason = prompt("סיבת הביטול?");
-                if(reason === null) return;
-                await window.fs.updateDoc(window.fs.doc(window.db, "transactions", lesson.id), {
-                    status: 'cancelled',
-                    cancelReason: reason
-                });
-                loadData();
+            const updateTestStatus = async (type, status) => {
+                await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), { [type]: status });
+                setSelectedStudent({...selectedStudent, [type]: status});
             };
 
-            if (!isAuthenticated) {
-                return (
-                    <div class="flex flex-col items-center justify-center h-screen bg-slate-900 text-white p-6">
-                        <div class="text-6xl mb-8">🚗</div>
-                        <h1 class="text-2xl font-bold mb-4 italic tracking-widest uppercase text-blue-400">DrivePro Access</h1>
-                        <input type="password" 
-                               class="bg-slate-800 text-white text-center text-4xl tracking-[0.5em] p-5 rounded-3xl w-full max-w-xs border-2 border-blue-500/30 focus:border-blue-500 outline-none transition-all shadow-2xl shadow-blue-500/20"
-                               placeholder="****"
-                               maxLength="4"
-                               autoFocus
-                               onChange={(e) => {
-                                   setPinInput(e.target.value);
-                                   if(e.target.value === SECRET_PIN) setIsAuthenticated(true);
-                               }} />
-                        <p class="mt-8 text-slate-500 text-sm italic">מערכת ניהול מאובטחת</p>
-                    </div>
-                );
-            }
+            // --- UI Components ---
+            if (!isAuthenticated) return (
+                <div class="flex flex-col items-center justify-center h-screen p-6">
+                    <h1 class="text-4xl font-black mb-8 text-indigo-400">DRIVE PRO</h1>
+                    <input type="password" placeholder="קוד גישה" 
+                        class="bg-slate-800 border-2 border-indigo-500 text-white text-center text-2xl p-4 rounded-2xl w-64 outline-none"
+                        onChange={(e) => e.target.value === SECRET_PIN && setIsAuthenticated(true)} />
+                </div>
+            );
 
-            if (view === 'schedule') {
-                return (
-                    <div class="p-4 max-w-md mx-auto pb-24">
-                        <button onClick={() => setView('main')} class="mb-6 font-bold text-blue-600 flex items-center gap-1"><span>←</span> חזרה לתלמידים</button>
-                        <h2 class="text-3xl font-black mb-6 text-slate-800">🗓️ יומן שיעורים</h2>
-                        <div class="space-y-4">
-                            {schedule.map(l => (
-                                <div key={l.id} class={`p-5 rounded-3xl bg-white shadow-sm border-r-8 ${l.status === 'upcoming' ? 'border-blue-500' : l.status === 'cancelled' ? 'border-red-400 opacity-60' : 'border-emerald-500'}`}>
-                                    <div class="flex justify-between items-start">
-                                        <div>
-                                            <div class="font-bold text-lg text-slate-800">{l.studentName}</div>
-                                            <div class="text-sm font-medium text-slate-500">
-                                                {new Date(l.date).toLocaleDateString('he-IL', {weekday: 'long', day: 'numeric', month: 'numeric'})}
-                                                <span class="mx-1 text-slate-300">|</span>
-                                                {new Date(l.date).toLocaleTimeString('he-IL', {hour: '2-digit', minute: '2-digit'})}
-                                            </div>
-                                            {l.cancelReason && <div class="mt-2 text-xs bg-red-50 text-red-600 p-2 rounded-lg italic">סיבת ביטול: {l.cancelReason}</div>}
-                                        </div>
-                                        <div class="flex flex-col gap-2">
-                                            {l.status === 'upcoming' && (
-                                                <button onClick={() => cancelLesson(l)} class="bg-red-50 text-red-500 text-[10px] font-bold py-1 px-3 rounded-full border border-red-100 uppercase tracking-tighter">ביטול</button>
-                                            )}
-                                            <div class={`text-xs font-bold px-2 py-1 rounded-full text-center ${l.status === 'upcoming' ? 'bg-blue-50 text-blue-600' : l.status === 'cancelled' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                                                {l.status === 'upcoming' ? 'עתידי' : l.status === 'cancelled' ? 'בוטל' : 'בוצע'}
-                                            </div>
-                                        </div>
-                                    </div>
+            if (view === 'details' && selectedStudent) return (
+                <div class="p-4 max-w-2xl mx-auto pb-24">
+                    <button onClick={() => {setView('main'); loadStudents();}} class="mb-6 text-indigo-400 font-bold">← חזרה לרשימה</button>
+                    
+                    <div class="bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700 mb-6">
+                        <div class="flex justify-between items-start mb-4">
+                            <h2 class="text-3xl font-black">{selectedStudent.name}</h2>
+                            <div class="text-2xl font-black text-rose-500">₪{selectedStudent.balance}</div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4 text-sm text-slate-400">
+                            <div>📞 {selectedStudent.phone}</div>
+                            <div>🆔 {selectedStudent.idNum}</div>
+                            <div>🏠 {selectedStudent.address}</div>
+                            <div class="text-indigo-400 font-bold">🏁 שיעורים: {selectedStudent.actualLessons.toFixed(1)}</div>
+                        </div>
+                        
+                        <div class="flex gap-2 mt-6">
+                            <button onClick={handleAddLesson} class="flex-1 bg-indigo-600 p-3 rounded-xl font-bold">+ קביעת שיעור</button>
+                            <button onClick={handleAddPayment} class="flex-1 bg-emerald-600 p-3 rounded-xl font-bold">₪ הזנת תשלום</button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3 mb-6">
+                        <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-center">
+                            <div class="text-xs mb-2">טסט פנימי</div>
+                            <select class="bg-slate-700 rounded p-1 w-full" value={selectedStudent.internalTest} onChange={(e)=>updateTestStatus('internalTest', e.target.value)}>
+                                <option>טרם</option><option>עבר</option><option>נכשל</option>
+                            </select>
+                        </div>
+                        <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-center">
+                            <div class="text-xs mb-2">טסט חיצוני</div>
+                            <select class="bg-slate-700 rounded p-1 w-full" value={selectedStudent.externalTest} onChange={(e)=>updateTestStatus('externalTest', e.target.value)}>
+                                <option>טרם</option><option>עבר</option><option>נכשל</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <h3 class="font-bold mb-4">היסטוריית פעולות</h3>
+                    <div class="space-y-3">
+                        {transactions.map(t => (
+                            <div key={t.id} class="bg-slate-800/50 p-4 rounded-2xl border border-slate-700 flex justify-between">
+                                <div>
+                                    <div class="font-bold">{t.type === 'lesson' ? '📖 שיעור נהיגה' : `💰 תשלום (${t.method})`}</div>
+                                    <div class="text-xs text-slate-500">{new Date(t.date).toLocaleString('he-IL')}</div>
                                 </div>
-                            ))}
-                            {schedule.length === 0 && <div class="text-center text-slate-400 py-12 italic">אין שיעורים מתוזמנים</div>}
-                        </div>
-                    </div>
-                );
-            }
-
-            return (
-                <div class="p-4 max-w-md mx-auto pb-28">
-                    <header class="flex justify-between items-center mb-8 pt-4">
-                        <div>
-                            <h1 class="text-3xl font-black text-slate-900 tracking-tight italic">DRIVE<span class="text-blue-600">PRO</span></h1>
-                            <p class="text-xs font-bold text-slate-400 tracking-widest uppercase">Instructor Panel</p>
-                        </div>
-                        <button onClick={() => setView('schedule')} class="bg-blue-600 text-white w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-200 active:scale-90 transition-transform">
-                            <span class="text-2xl">🗓️</span>
-                        </button>
-                    </header>
-
-                    {/* קופה מהירה */}
-                    <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 mb-8 flex justify-between items-center">
-                        <div>
-                            <div class="text-xs font-bold text-slate-400 uppercase tracking-tighter">יתרה כוללת לקבלה</div>
-                            <div class="text-3xl font-black text-slate-800">₪{students.reduce((a,b)=>a+(b.balance||0),0)}</div>
-                        </div>
-                        <div class="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-600 font-bold text-xl italic">₪</div>
-                    </div>
-
-                    <div class="bg-white p-6 rounded-[2.5rem] shadow-md border border-slate-50 mb-10">
-                        <h3 class="font-black text-lg mb-4 text-slate-800">תלמיד חדש</h3>
-                        <div class="flex gap-2">
-                            <input class="flex-1 p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 ring-blue-500 transition-all font-medium" 
-                                   placeholder="שם מלא..." value={name} onChange={e=>setName(e.target.value)} />
-                            <button class="bg-blue-600 text-white px-6 rounded-2xl font-bold shadow-lg shadow-blue-100" onClick={addStudent}>+</button>
-                        </div>
-                    </div>
-
-                    <div class="space-y-5">
-                        <div class="flex justify-between items-center px-2">
-                            <h3 class="font-black text-slate-400 text-xs uppercase tracking-widest">תלמידים פעילים</h3>
-                            <span class="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-bold">{students.length}</span>
-                        </div>
-                        {students.map(s => (
-                            <div key={s.id} class="bg-white p-6 rounded-[2rem] shadow-sm border border-white hover:border-blue-100 transition-all relative overflow-hidden group">
-                                <div class="flex justify-between items-start relative z-10">
-                                    <div>
-                                        <h3 class="font-black text-xl text-slate-800 mb-1">{s.name}</h3>
-                                        <p class="text-slate-400 text-xs font-bold">{s.phone || 'ללא טלפון'}</p>
+                                <div class="text-right">
+                                    <div class={t.type === 'lesson' ? 'text-rose-400' : 'text-emerald-400'}>
+                                        {t.type === 'lesson' ? `+₪${t.amount}` : `-₪${t.amount}`}
                                     </div>
-                                    <div class={`text-2xl font-black italic ${s.balance > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-                                        ₪{s.balance || 0}
-                                    </div>
+                                    {t.status === 'upcoming' && <div class="text-[10px] bg-indigo-900 text-indigo-300 px-2 rounded-full mt-1">עתידי</div>}
                                 </div>
-                                <div class="mt-6 flex gap-2 relative z-10">
-                                    <button onClick={()=>{setSelectedStudent(s); createLesson();}} class="flex-1 bg-slate-900 text-white py-3 rounded-2xl text-[11px] font-bold uppercase tracking-tight shadow-lg shadow-slate-200 active:scale-95 transition-all">קביעת שיעור</button>
-                                    <button onClick={()=>{setSelectedStudent(s); createPayment();}} class="flex-1 bg-emerald-500 text-white py-3 rounded-2xl text-[11px] font-bold uppercase tracking-tight shadow-lg shadow-emerald-100 active:scale-95 transition-all">הזנת תשלום</button>
-                                </div>
-                                <div class="absolute right-0 bottom-0 w-24 h-24 bg-slate-50 rounded-full translate-x-10 translate-y-10 group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
                             </div>
                         ))}
+                    </div>
+                </div>
+            );
+
+            return (
+                <div class="p-4 max-w-2xl mx-auto">
+                    <div class="flex justify-between items-center mb-8 pt-4">
+                        <h1 class="text-3xl font-black italic">DRIVE<span class="text-indigo-500">PRO</span></h1>
+                        <button onClick={handleAddStudent} class="bg-indigo-600 w-12 h-12 rounded-full text-2xl font-bold shadow-lg shadow-indigo-500/20">+</button>
+                    </div>
+
+                    <div class="grid gap-4">
+                        {students.map(s => (
+                            <div key={s.id} onClick={() => loadStudentData(s)} 
+                                class="bg-slate-800 p-5 rounded-[2rem] border border-slate-700 flex justify-between items-center active:scale-95 transition-transform shadow-lg">
+                                <div>
+                                    <div class="text-xl font-bold">{s.name}</div>
+                                    <div class="text-sm text-slate-500 italic">שיעורים: {s.actualLessons?.toFixed(1) || 0}</div>
+                                </div>
+                                <div class={`text-2xl font-black ${s.balance > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>₪{s.balance}</div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-indigo-600 px-8 py-3 rounded-full font-bold shadow-2xl">
+                        סה"כ חוב תלמידים: ₪{students.reduce((a,b)=>a+b.balance, 0)}
                     </div>
                 </div>
             );
