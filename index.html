@@ -3,37 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ניהול תלמידי נהיגה</title>
-    <!-- ספריות חיצוניות -->
+    <title>מערכת ניהול מורה נהיגה PRO</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, query, orderBy, doc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-      const firebaseConfig = {
-
-        apiKey: "AIzaSyBVTYYZJdA8sysWRjdK9mRIsndqo-p31s4",
-        authDomain: "drivingapp-d231f.firebaseapp.com",
-        projectId: "drivingapp-d231f",
-        storageBucket: "drivingapp-d231f.firebasestorage.app",
-        messagingSenderId: "235953243839",
-        appId: "1:235953243839:web:3facef57e16212f0fae80a"
-      };
+        const firebaseConfig = {
+            
+          apiKey: "AIzaSyBVTYYZJdA8sysWRjdK9mRIsndqo-p31s4",
+          authDomain: "drivingapp-d231f.firebaseapp.com",
+          projectId: "drivingapp-d231f",
+          storageBucket: "drivingapp-d231f.firebasestorage.app",
+          messagingSenderId: "235953243839",
+          appId: "1:235953243839:web:3facef57e16212f0fae80a"
+        
+        };
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
-        
-        // הפיכת הפונקציות לזמינות ל-React
         window.db = db;
-        window.fs = { collection, addDoc, getDocs, query, orderBy, doc, updateDoc, increment };
+        window.fs = { collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc };
     </script>
 </head>
-<body class="bg-gray-100 min-h-screen">
+<body class="bg-slate-50 min-h-screen text-slate-900">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -41,9 +38,14 @@
 
         function App() {
             const [students, setStudents] = useState([]);
+            const [history, setHistory] = useState([]);
+            const [view, setView] = useState('main'); // 'main' or 'student-details'
+            const [selectedStudent, setSelectedStudent] = useState(null);
+            const [loading, setLoading] = useState(true);
+            
+            // טפסים
             const [name, setName] = useState('');
             const [phone, setPhone] = useState('');
-            const [loading, setLoading] = useState(true);
 
             useEffect(() => {
                 if (window.db) loadStudents();
@@ -51,75 +53,150 @@
             }, []);
 
             const loadStudents = async () => {
-                try {
-                    const q = window.fs.query(window.fs.collection(window.db, "students"), window.fs.orderBy("name"));
-                    const snap = await window.fs.getDocs(q);
-                    setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                    setLoading(false);
-                } catch (e) { console.error(e); }
+                const q = window.fs.query(window.fs.collection(window.db, "students"), window.fs.orderBy("name"));
+                const snap = await window.fs.getDocs(q);
+                setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setLoading(false);
+            };
+
+            const loadHistory = async (studentId) => {
+                const q = window.fs.query(
+                    window.fs.collection(window.db, "transactions"), 
+                    window.fs.where("studentId", "==", studentId),
+                    window.fs.orderBy("date", "desc")
+                );
+                const snap = await window.fs.getDocs(q);
+                setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
             };
 
             const addStudent = async () => {
-                if(!name || !phone) return alert("מלא פרטים");
+                if(!name) return alert("שם חובה");
                 await window.fs.addDoc(window.fs.collection(window.db, "students"), {
-                    name, phone, balance: 0, lessons: 0
+                    name, phone, balance: 0, lessons: 0, createdAt: new Date().toISOString()
                 });
                 setName(''); setPhone(''); loadStudents();
             };
 
-            const updateAmount = async (student, amount, isLesson) => {
-                const sRef = window.fs.doc(window.db, "students", student.id);
-                await window.fs.updateDoc(sRef, {
-                    balance: window.fs.increment(amount),
-                    lessons: isLesson ? window.fs.increment(1) : window.fs.increment(0)
+            const addTransaction = async (type) => {
+                const amount = prompt(type === 'lesson' ? "מחיר שיעור?" : "סכום תשלום?", "200");
+                if(!amount) return;
+                const note = prompt("הערה (אופציונלי):", type === 'lesson' ? "שיעור נהיגה" : "תשלום");
+                
+                const val = Number(amount);
+                const change = type === 'lesson' ? val : -val;
+
+                await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
+                    studentId: selectedStudent.id,
+                    type,
+                    amount: val,
+                    note: note || "",
+                    date: new Date().toISOString()
                 });
+
+                const sRef = window.fs.doc(window.db, "students", selectedStudent.id);
+                await window.fs.updateDoc(sRef, {
+                    balance: window.fs.increment(change),
+                    lessons: type === 'lesson' ? window.fs.increment(1) : window.fs.increment(0)
+                });
+
+                loadHistory(selectedStudent.id);
+                loadStudents();
+                // עדכון הסטייט המקומי של התלמיד הנבחר
+                setSelectedStudent(prev => ({...prev, balance: prev.balance + change, lessons: type === 'lesson' ? prev.lessons + 1 : prev.lessons}));
+            };
+
+            const deleteStudent = async (id) => {
+                if(!confirm("למחוק תלמיד זה? כל ההיסטוריה תימחק!")) return;
+                await window.fs.deleteDoc(window.fs.doc(window.db, "students", id));
+                setView('main');
                 loadStudents();
             };
 
-            const downloadPDF = (student) => {
-                const doc = new jspdf.jsPDF();
-                doc.text(`Student: ${student.name}`, 10, 10);
-                doc.text(`Phone: ${student.phone}`, 10, 20);
-                doc.text(`Lessons: ${student.lessons}`, 10, 30);
-                doc.text(`Balance: ${student.balance} NIS`, 10, 40);
-                doc.save(`${student.name}.pdf`);
-            };
+            const totalGlobalBalance = students.reduce((sum, s) => sum + (s.balance || 0), 0);
 
-            return (
-                <div class="max-w-md mx-auto p-4 pb-20">
-                    <h1 class="text-2xl font-bold text-center mb-6 text-blue-900">🚗 ניהול תלמידים</h1>
-                    
-                    {/* טופס הוספה */}
-                    <div class="bg-white p-5 rounded-2xl shadow-lg mb-8 border border-blue-100">
-                        <input class="w-full mb-3 p-3 bg-gray-50 border rounded-xl" placeholder="שם מלא" value={name} onChange={e=>setName(e.target.value)} />
-                        <input class="w-full mb-4 p-3 bg-gray-50 border rounded-xl" placeholder="טלפון" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} />
-                        <button class="w-full bg-blue-600 text-white p-3 rounded-xl font-bold shadow-md active:bg-blue-700" onClick={addStudent}>+ הוסף תלמיד חדש</button>
-                    </div>
+            if (view === 'student-details' && selectedStudent) {
+                return (
+                    <div class="p-4 max-w-md mx-auto pb-20">
+                        <button onClick={() => setView('main')} class="mb-4 text-blue-600 font-bold flex items-center gap-2">← חזרה לרשימה</button>
+                        
+                        <div class="bg-white p-6 rounded-3xl shadow-xl mb-6">
+                            <h2 class="text-3xl font-black mb-1 text-slate-800">{selectedStudent.name}</h2>
+                            <p class="text-slate-500 mb-4">{selectedStudent.phone}</p>
+                            
+                            <div class="grid grid-cols-2 gap-4 border-t pt-4">
+                                <div class="text-center">
+                                    <div class="text-sm text-slate-400">יתרת חוב</div>
+                                    <div class={`text-2xl font-bold ${selectedStudent.balance > 0 ? 'text-red-500' : 'text-green-500'}`}>₪{selectedStudent.balance}</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="text-sm text-slate-400">סה"כ שיעורים</div>
+                                    <div class="text-2xl font-bold text-slate-700">{selectedStudent.lessons}</div>
+                                </div>
+                            </div>
+                        </div>
 
-                    {/* רשימת תלמידים */}
-                    {loading ? <p class="text-center">טוען נתונים...</p> : (
-                        <div class="space-y-4">
-                            {students.map(s => (
-                                <div key={s.id} class="bg-white p-5 rounded-2xl shadow-md border-r-8 border-blue-500 flex justify-between items-center">
-                                    <div class="flex-1">
-                                        <h3 class="font-bold text-xl text-gray-800">{s.name}</h3>
-                                        <p class="text-gray-500 mb-2">📞 {s.phone}</p>
-                                        <div class="flex gap-2">
-                                            <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-bold">שיעורים: {s.lessons}</span>
+                        <div class="flex gap-2 mb-6">
+                            <button onClick={()=>addTransaction('lesson')} class="flex-1 bg-emerald-500 text-white p-4 rounded-2xl font-bold shadow-lg shadow-emerald-100">+ שיעור</button>
+                            <button onClick={()=>addTransaction('payment')} class="flex-1 bg-amber-500 text-white p-4 rounded-2xl font-bold shadow-lg shadow-amber-100">💰 תשלום</button>
+                        </div>
+
+                        <h3 class="font-bold mb-3 text-slate-600 uppercase tracking-wider text-sm">היסטוריית פעולות</h3>
+                        <div class="space-y-3">
+                            {history.map(t => (
+                                <div key={t.id} class={`p-4 rounded-2xl bg-white border-r-4 ${t.type === 'lesson' ? 'border-emerald-400' : 'border-amber-400'}`}>
+                                    <div class="flex justify-between items-center">
+                                        <div>
+                                            <div class="font-bold">{t.note || (t.type === 'lesson' ? 'שיעור נהיגה' : 'תשלום')}</div>
+                                            <div class="text-xs text-slate-400">{new Date(t.date).toLocaleDateString('he-IL')}</div>
                                         </div>
-                                    </div>
-                                    <div class="text-left">
-                                        <div class={`text-2xl font-black mb-3 ${s.balance > 0 ? 'text-red-500' : 'text-green-600'}`}>₪{s.balance}</div>
-                                        <div class="flex gap-2">
-                                            <button onClick={() => {const p = prompt("מחיר שיעור?","200"); if(p) updateAmount(s, Number(p), true)}} class="bg-green-500 text-white p-2 rounded-lg text-xs font-bold">➕ שיעור</button>
-                                            <button onClick={() => {const p = prompt("סכום תשלום?","200"); if(p) updateAmount(s, -Number(p), false)}} class="bg-yellow-500 text-white p-2 rounded-lg text-xs font-bold">💰 תשלום</button>
-                                            <button onClick={() => downloadPDF(s)} class="bg-gray-200 p-2 rounded-lg text-xs">📄</button>
+                                        <div class={`font-bold ${t.type === 'lesson' ? 'text-slate-700' : 'text-amber-600'}`}>
+                                            {t.type === 'lesson' ? `+₪${t.amount}` : `-₪${t.amount}`}
                                         </div>
                                     </div>
                                 </div>
                             ))}
+                            {history.length === 0 && <div class="text-center text-slate-400 py-10">אין עדיין פעולות רשומות</div>}
                         </div>
-                    )}
+                        
+                        <button onClick={()=>deleteStudent(selectedStudent.id)} class="w-full mt-10 text-red-300 text-sm">מחיקת תלמיד מהמערכת</button>
+                    </div>
+                );
+            }
+
+            return (
+                <div class="p-4 max-w-md mx-auto pb-24">
+                    <div class="bg-gradient-to-br from-blue-700 to-blue-900 text-white p-6 rounded-3xl shadow-2xl mb-8 relative overflow-hidden">
+                        <div class="relative z-10">
+                            <h1 class="text-sm opacity-80 mb-1">יתרה כוללת בקופה:</h1>
+                            <div class="text-4xl font-black italic">₪{totalGlobalBalance}</div>
+                        </div>
+                        <div class="absolute top-[-20px] left-[-20px] w-32 h-32 bg-white/10 rounded-full blur-3xl"></div>
+                    </div>
+
+                    <div class="bg-white p-5 rounded-3xl shadow-md mb-8">
+                        <h3 class="font-bold mb-4 text-slate-700">תלמיד חדש</h3>
+                        <div class="space-y-3">
+                            <input class="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500" placeholder="שם מלא" value={name} onChange={e=>setName(e.target.value)} />
+                            <input class="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500" placeholder="טלפון" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} />
+                            <button class="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold" onClick={addStudent}>צור כרטיס תלמיד</button>
+                        </div>
+                    </div>
+
+                    <div class="space-y-4">
+                        <h3 class="font-bold text-slate-500 text-sm px-2">רשימת תלמידים ({students.length})</h3>
+                        {students.map(s => (
+                            <div key={s.id} onClick={() => { setSelectedStudent(s); loadHistory(s.id); setView('student-details'); }} class="bg-white p-5 rounded-3xl shadow-sm flex justify-between items-center border border-white hover:border-blue-200 transition-all active:scale-95">
+                                <div>
+                                    <div class="font-bold text-lg text-slate-800">{s.name}</div>
+                                    <div class="text-sm text-slate-400 font-medium">שיעורים: {s.lessons || 0}</div>
+                                </div>
+                                <div class="text-left">
+                                    <div class={`text-xl font-black ${s.balance > 0 ? 'text-red-500' : 'text-emerald-500'}`}>₪{s.balance || 0}</div>
+                                    <div class="text-[10px] text-slate-300 font-bold tracking-widest uppercase">לחץ לפרטים</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             );
         }
