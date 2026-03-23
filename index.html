@@ -44,7 +44,7 @@
 
         function App() {
             const [isAuthenticated, setIsAuthenticated] = useState(false);
-            const [view, setView] = useState('main'); // main, add-student, student-details, add-lesson, student-list, ledger, ledger-options, select-ledger-student, student-history
+            const [view, setView] = useState('main'); 
             const [students, setStudents] = useState([]);
             const [allTransactions, setAllTransactions] = useState([]);
             const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -72,7 +72,7 @@
             const handleUpdateLesson = async (lesson) => {
                 const action = prompt("בחר פעולה: 1-עריכת שעה/תאריך, 2-ביטול שיעור", "1");
                 if (action === "1") {
-                    const newDateTime = prompt("הזן תאריך ושעה חדשים (YYYY-MM-DDTHH:MM)", lesson.date.slice(0,16));
+                    const newDateTime = prompt("הזן תאריך ושעה חדשים (YYYY-MM-DDTHH:MM)", lesson.date?.slice(0,16));
                     if (newDateTime) {
                         await window.fs.updateDoc(window.fs.doc(window.db, "transactions", lesson.id), { 
                             date: new Date(newDateTime).toISOString(),
@@ -90,21 +90,6 @@
                         loadData();
                     }
                 }
-            };
-
-            const exportLedgerPDF = (isDownload = true) => {
-                const doc = new jspdf.jsPDF();
-                const filtered = allTransactions.filter(t => t.studentId === selectedStudent.id);
-                doc.text(`Ledger: ${selectedStudent.name}`, 10, 10);
-                const rows = filtered.map(t => [new Date(t.date).toLocaleDateString('he-IL'), t.type, t.amount]);
-                doc.autoTable({ head: [['Date', 'Type', 'Amount']], body: rows, startY: 20 });
-                if (isDownload) doc.save(`${selectedStudent.name}.pdf`);
-            };
-
-            const sendLedgerWA = () => {
-                const phone = selectedStudent.phone ? selectedStudent.phone.replace(/\D/g, '') : '';
-                const msg = `שלום ${selectedStudent.name}, יתרה נוכחית: ₪${selectedStudent.balance}`;
-                window.open(`https://wa.me/${phone.startsWith('0') ? '972' + phone.substring(1) : phone}?text=${msg}`, '_blank');
             };
 
             const handleDeleteStudent = async (id) => {
@@ -129,6 +114,7 @@
 
             const handleConfirmLesson = async () => {
                 const { dateTime, price } = lessonForm;
+                if(!dateTime) return alert("בחר תאריך");
                 const isoDate = new Date(dateTime).toISOString();
                 const isUpcoming = new Date(dateTime) > new Date();
                 await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
@@ -154,6 +140,7 @@
                 loadData();
             };
 
+            // --- VIEW: PIN LOGIN ---
             if (!isAuthenticated) return (
                 <div className="flex flex-col items-center justify-center h-screen bg-slate-950 text-white p-6 text-center">
                     <h1 className="text-4xl font-black mb-8 text-indigo-500 italic uppercase">Drive Pro</h1>
@@ -162,11 +149,11 @@
                 </div>
             );
 
-            // --- רכיב היסטוריית שיעורים בתלמיד ---
+            // --- VIEW: STUDENT HISTORY ---
             if (view === 'student-history' && selectedStudent) return (
                 <div className="p-6 max-w-md mx-auto">
                     <button onClick={() => setView('student-details')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
-                    <h2 className="text-2xl font-black mb-6 italic">יומן שיעורים: {selectedStudent.name}</h2>
+                    <h2 className="text-2xl font-black mb-6 italic text-slate-100">יומן שיעורים: {selectedStudent.name}</h2>
                     <div className="space-y-3">
                         {allTransactions.filter(t => t.studentId === selectedStudent.id && t.type === 'lesson').map(l => (
                             <div key={l.id} onClick={() => handleUpdateLesson(l)} className={`bg-slate-900 p-4 rounded-2xl border-r-8 flex justify-between items-center transition-all active:scale-95 ${l.status === 'completed' ? 'border-emerald-500' : l.status === 'cancelled' ? 'border-red-500 opacity-60' : 'border-slate-500'}`}>
@@ -182,22 +169,104 @@
                 </div>
             );
 
+            // --- VIEW: LEDGER OPTIONS ---
             if (view === 'ledger-options' && selectedStudent) return (
                 <div className="p-6 max-w-md mx-auto flex flex-col justify-center min-h-screen text-center">
                     <button onClick={() => setView('select-ledger-student')} className="mb-10 text-blue-400 font-bold self-start">← חזרה</button>
                     <h2 className="text-3xl font-black mb-10">{selectedStudent.name}</h2>
                     <div className="space-y-4">
-                        <button onClick={sendLedgerWA} className="w-full bg-emerald-600 text-white p-5 rounded-3xl font-black">שלח כרטסת (WhatsApp)</button>
-                        <button onClick={() => exportLedgerPDF(true)} className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black">הורד כרטסת (PDF)</button>
+                        <button onClick={() => alert('וואטסאפ בבניה')} className="w-full bg-emerald-600 text-white p-5 rounded-3xl font-black">שלח כרטסת (WhatsApp)</button>
+                        <button onClick={() => alert('PDF בבניה')} className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black">הורד כרטסת (PDF)</button>
                         <button onClick={() => setView('ledger')} className="w-full bg-slate-800 text-white p-5 rounded-3xl font-black border border-slate-700">הצג כרטסת</button>
                     </div>
                 </div>
             );
 
+            // --- VIEW: SELECT STUDENT / LIST ---
             if (view === 'select-ledger-student' || view === 'student-list') return (
                 <div className="p-6 max-w-md mx-auto">
                     <button onClick={() => setView('main')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
                     <input autoFocus className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none mb-6" placeholder="🔍 חפש תלמיד..." onChange={e => setSearchTerm(e.target.value)} />
                     <div className="space-y-3">
-                        {students.filter(s => s.name.includes(searchTerm)).map(s => (
-                            <div key={s.id} onClick={() =>
+                        {students.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).map(s => (
+                            <div key={s.id} onClick={() => { setSelectedStudent(s); setView(view === 'select-ledger-student' ? 'ledger-options' : 'student-details'); }} className="bg-slate-900 p-5 rounded-[2rem] border border-slate-800 flex justify-between items-center active:scale-95 transition-all">
+                                <span className="font-bold">{s.name}</span>
+                                <span className={s.balance > 0 ? 'text-red-500' : 'text-emerald-500'}>₪{s.balance}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+
+            // --- VIEW: GENERAL LEDGER ---
+            if (view === 'ledger') return (
+                <div className="p-6 max-w-md mx-auto">
+                    <button onClick={() => setView(selectedStudent ? 'ledger-options' : 'main')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
+                    <h2 className="text-2xl font-black mb-6 italic">{selectedStudent?.name || 'פירוט כללי'}</h2>
+                    <div className="space-y-3">
+                        {allTransactions.filter(t => !selectedStudent || t.studentId === selectedStudent.id).map(t => (
+                            <div key={t.id} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex justify-between items-center text-xs text-right">
+                                <div><div className="font-bold text-slate-100">{t.type === 'lesson' ? '📖 שיעור' : `💰 תשלום (${t.method})`}</div><div className="text-slate-500">{new Date(t.date).toLocaleDateString('he-IL')}</div></div>
+                                <div className={`font-black text-sm ${t.type === 'lesson' ? 'text-red-400' : 'text-emerald-400'}`}>{t.type === 'lesson' ? `+₪${t.amount}` : `-₪${t.amount}`}</div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+
+            // --- VIEW: ADD STUDENT ---
+            if (view === 'add-student') return (
+                <div className="p-6 max-w-md mx-auto min-h-screen">
+                    <button onClick={() => setView('main')} className="mb-8 text-blue-400 font-bold">← ביטול</button>
+                    <div className="space-y-4">
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="שם מלא *" value={newStudent.name} onChange={e=>setNewStudent({...newStudent, name: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none text-right" type="date" value={newStudent.dob} onChange={e=>setNewStudent({...newStudent, dob: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none text-right" placeholder="טלפון" type="tel" value={newStudent.phone} onChange={e=>setNewStudent({...newStudent, phone: e.target.value})} />
+                        <button className="w-full bg-blue-600 text-white p-5 rounded-[1.8rem] font-black" onClick={handleAddStudent}>שמירת תלמיד</button>
+                    </div>
+                </div>
+            );
+
+            // --- VIEW: STUDENT DETAILS ---
+            if (view === 'student-details' && selectedStudent) return (
+                <div className="p-6 max-w-md mx-auto">
+                    <button onClick={() => setView('main')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
+                    <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl mb-8">
+                        <h2 className="text-3xl font-black text-white mb-6 italic">{selectedStudent.name}</h2>
+                        <div className="space-y-3 text-slate-400 text-xs mb-8">
+                            <p onClick={() => updateStudentField('phone', 'טלפון')}>📞 טלפון: <span className="text-slate-200">{selectedStudent.phone || 'הוסף'}</span></p>
+                        </div>
+                        <div className="flex justify-between border-t border-slate-800 pt-6">
+                            <div onClick={() => setView('ledger')} className="text-center flex-1 border-l border-slate-800 cursor-pointer">
+                                <p className="text-[10px] text-slate-500 font-bold mb-1">חוב (פירוט)</p>
+                                <p className={`text-2xl font-black ${selectedStudent.balance > 0 ? 'text-red-500' : 'text-emerald-500'}`}>₪{selectedStudent.balance}</p>
+                            </div>
+                            <div onClick={() => setView('student-history')} className="text-center flex-1 cursor-pointer">
+                                <p className="text-[10px] text-slate-500 font-bold mb-1">שיעורים (פירוט)</p>
+                                <p className="text-2xl font-black text-slate-100">{selectedStudent.lessons || 0}</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex gap-4 mb-10"><button onClick={() => { setLessonForm({dateTime: new Date().toISOString().slice(0,16), price: '200'}); setView('add-lesson'); }} className="flex-1 bg-blue-600 text-white py-4 rounded-[1.8rem] font-black">+ שיעור</button><button onClick={() => handleAddPayment(selectedStudent.id)} className="flex-1 bg-emerald-600 text-white py-4 rounded-[1.8rem] font-black">₪ תשלום</button></div>
+                    <button onClick={() => handleDeleteStudent(selectedStudent.id)} className="w-full text-red-900 text-[10px] font-bold uppercase opacity-30">מחיקת תלמיד</button>
+                </div>
+            );
+
+            // --- VIEW: ADD LESSON ---
+            if (view === 'add-lesson') return (
+                <div className="p-6 max-w-md mx-auto text-center">
+                    <button onClick={() => setView('student-details')} className="mb-8 text-blue-400 font-bold self-start block">← ביטול</button>
+                    <div className="space-y-6 bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800">
+                        <input className="w-full p-4 bg-slate-800 rounded-2xl border border-slate-700 outline-none text-center font-bold" type="datetime-local" value={lessonForm.dateTime} onChange={e=>setLessonForm({...lessonForm, dateTime: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-800 rounded-2xl border border-slate-700 outline-none text-center text-xl font-black text-emerald-400" type="number" value={lessonForm.price} onChange={e=>setLessonForm({...lessonForm, price: e.target.value})} />
+                        <button className="w-full bg-blue-600 text-white p-5 rounded-2xl font-black shadow-xl" onClick={handleConfirmLesson}>אשר שיעור</button>
+                    </div>
+                </div>
+            );
+
+            // --- MAIN DASHBOARD ---
+            return (
+                <div className="p-4 max-w-md mx-auto pb-32">
+                    <header className="flex justify-between items-center mb-8 pt-6 px-4 italic">
+                        <h1 className="text-3xl font-black text-slate-100 tracking-tighter italic uppercase">Drive<span className="text-blue-500">Pro</span></h1>
+                        <div onClick={() => { setSelectedStudent(null); setView('ledger'); }} className="text-[10px] font-black text-slate-500 bg-slate-900 px-4 py-2 rounded-full border border-slate-800 cursor-pointer">יתרה: <span className="text-emerald-500 un
