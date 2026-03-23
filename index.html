@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DrivePro Elite v4.0</title>
+    <title>DrivePro v4.5 Elite</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -28,7 +28,7 @@
         window.fs = { collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc, getDoc };
     </script>
 </head>
-<body class="bg-[#0f172a] text-slate-200 min-h-screen font-sans">
+<body class="bg-[#0f172a] text-slate-200 min-h-screen font-sans overflow-x-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -38,15 +38,20 @@
 
         function App() {
             const [isAuthenticated, setIsAuthenticated] = useState(false);
-            const [view, setView] = useState('main'); 
+            const [activeTab, setActiveTab] = useState('students'); // 'students' or 'schedule'
+            const [view, setView] = useState('list'); // 'list' or 'details'
             const [students, setStudents] = useState([]);
             const [selectedStudent, setSelectedStudent] = useState(null);
             const [transactions, setTransactions] = useState([]);
+            const [fullSchedule, setFullSchedule] = useState([]);
             const [loading, setLoading] = useState(false);
 
             useEffect(() => {
-                if (isAuthenticated) loadStudents();
-            }, [isAuthenticated]);
+                if (isAuthenticated) {
+                    loadStudents();
+                    loadAllLessons();
+                }
+            }, [isAuthenticated, activeTab]);
 
             const loadStudents = async () => {
                 const q = window.fs.query(window.fs.collection(window.db, "students"), window.fs.orderBy("name"));
@@ -54,7 +59,14 @@
                 setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
             };
 
-            const loadStudentData = async (student) => {
+            const loadAllLessons = async () => {
+                const q = window.fs.query(window.fs.collection(window.db, "transactions"), 
+                    window.fs.where("type", "==", "lesson"), window.fs.orderBy("date", "desc"));
+                const snap = await window.fs.getDocs(q);
+                setFullSchedule(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            };
+
+            const openStudentProfile = async (student) => {
                 setLoading(true);
                 const q = window.fs.query(window.fs.collection(window.db, "transactions"), 
                     window.fs.where("studentId", "==", student.id), window.fs.orderBy("date", "desc"));
@@ -65,22 +77,29 @@
                 setLoading(false);
             };
 
-            const handleAddStudent = async () => {
-                const name = prompt("שם מלא:");
-                const phone = prompt("טלפון:");
-                const idNum = prompt("מספר ת\"ז:");
-                const address = prompt("כתובת:");
+            const handleQuickAddStudent = async () => {
+                const name = prompt("שם התלמיד:");
                 if(!name) return;
-                await window.fs.addDoc(window.fs.collection(window.db, "students"), {
-                    name, phone, idNum, address, balance: 0, actualLessons: 0, 
+                const newDoc = await window.fs.addDoc(window.fs.collection(window.db, "students"), {
+                    name, phone: '', idNum: '', address: '', balance: 0, actualLessons: 0, 
                     internalTest: 'טרם', externalTest: 'טרם'
                 });
+                // העברה מיידית לכרטיס התלמיד החדש
+                const freshStudent = { id: newDoc.id, name, phone: '', idNum: '', address: '', balance: 0, actualLessons: 0, internalTest: 'טרם', externalTest: 'טרם' };
+                openStudentProfile(freshStudent);
+            };
+
+            const updateStudentField = async (field, label) => {
+                const newVal = prompt(`עדכן ${label}:`, selectedStudent[field] || "");
+                if (newVal === null) return;
+                await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), { [field]: newVal });
+                setSelectedStudent({...selectedStudent, [field]: newVal});
                 loadStudents();
             };
 
             const handleAddLesson = async () => {
-                const dateStr = prompt("תאריך ושעה (פורמט: YYYY-MM-DDTHH:MM)", new Date().toISOString().slice(0,16));
-                const duration = prompt("משך המפגש בדקות? (60 דקות = 1.5 שיעורים)", "60");
+                const dateStr = prompt("תאריך ושעה (YYYY-MM-DDTHH:MM)", new Date().toISOString().slice(0,16));
+                const duration = prompt("משך בדקות? (60 דק = 1.5 שיעורים)", "60");
                 const price = prompt("מחיר המפגש?", "200");
                 if(!dateStr || !price) return;
 
@@ -89,6 +108,7 @@
 
                 await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
                     studentId: selectedStudent.id,
+                    studentName: selectedStudent.name,
                     type: 'lesson',
                     date: dateStr,
                     amount: Number(price),
@@ -102,13 +122,13 @@
                         actualLessons: window.fs.increment(lessonsCount)
                     });
                 }
-                loadStudentData(selectedStudent);
+                openStudentProfile(selectedStudent);
             };
 
             const handleAddPayment = async () => {
                 const amount = prompt("סכום תשלום:");
                 if(!amount) return;
-                const method = prompt("אמצעי תשלום (1-מזומן, 2-ביט, 3-העברה, 4-צ'ק, 5-אשראי):", "2");
+                const method = prompt("אמצעי: 1-מזומן, 2-ביט, 3-העברה, 4-צ'ק, 5-אשראי", "2");
                 const methods = { "1": "מזומן", "2": "ביט", "3": "העברה", "4": "צ'ק", "5": "אשראי" };
                 
                 await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
@@ -122,85 +142,81 @@
                 await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), {
                     balance: window.fs.increment(-Number(amount))
                 });
-                loadStudentData(selectedStudent);
+                openStudentProfile(selectedStudent);
             };
 
-            const updateTestStatus = async (type, status) => {
-                await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), { [type]: status });
-                setSelectedStudent({...selectedStudent, [type]: status});
+            const updateTest = async (f, v) => {
+                await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), { [f]: v });
+                setSelectedStudent({...selectedStudent, [f]: v});
             };
 
-            // --- תיקון דף הכניסה ---
+            // --- תצוגות ---
+
             if (!isAuthenticated) return (
-                <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f172a] p-6 text-center">
-                    <div className="mb-8">
-                        <h1 className="text-5xl font-black text-indigo-500 italic tracking-tighter">DRIVE PRO</h1>
-                        <p className="text-slate-500 text-sm mt-2 uppercase tracking-widest font-bold">Secure Access Only</p>
+                <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f172a] p-6">
+                    <h1 className="text-5xl font-black text-indigo-500 italic mb-8">DRIVE PRO</h1>
+                    <div className="bg-slate-800 p-8 rounded-[2.5rem] shadow-2xl border border-slate-700 w-full max-w-xs text-center">
+                        <p className="text-slate-400 mb-4 font-bold uppercase text-xs">קוד גישה מאובטח</p>
+                        <input type="password" inputMode="numeric" placeholder="****" 
+                            className="bg-slate-900 border-2 border-indigo-500 text-white text-center text-4xl p-4 rounded-2xl w-full outline-none"
+                            onChange={(e) => e.target.value === SECRET_PIN && setIsAuthenticated(true)} />
                     </div>
-                    <div className="w-full max-w-xs bg-slate-800 p-8 rounded-[2.5rem] shadow-2xl border border-slate-700">
-                        <label className="block text-slate-400 text-sm mb-4 font-bold">הקש קוד גישה</label>
-                        <input 
-                            type="password" 
-                            inputMode="numeric"
-                            placeholder="****" 
-                            className="bg-slate-900 border-2 border-indigo-500/30 focus:border-indigo-500 text-white text-center text-4xl p-4 rounded-2xl w-full outline-none transition-all"
-                            onChange={(e) => e.target.value === SECRET_PIN && setIsAuthenticated(true)} 
-                        />
-                    </div>
-                    <p className="mt-12 text-slate-600 text-xs italic">Version 4.0 Elite System</p>
                 </div>
             );
 
-            if (view === 'details' && selectedStudent) return (
-                <div className="p-4 max-w-2xl mx-auto pb-24">
-                    <button onClick={() => {setView('main'); loadStudents();}} className="mb-6 text-indigo-400 font-bold flex items-center gap-2">← חזרה</button>
+            // תצוגת כרטיס תלמיד (פרופיל)
+            if (view === 'details') return (
+                <div className="p-4 max-w-2xl mx-auto pb-32">
+                    <button onClick={() => {setView('list'); loadStudents();}} className="mb-6 text-indigo-400 font-bold flex items-center gap-2">← חזרה לרשימה</button>
                     
                     <div className="bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700 mb-6">
-                        <div className="flex justify-between items-start mb-4 text-right">
-                            <h2 className="text-3xl font-black">{selectedStudent.name}</h2>
+                        <div className="flex justify-between items-start mb-6">
+                            <h2 className="text-3xl font-black tracking-tighter">{selectedStudent.name}</h2>
                             <div className="text-2xl font-black text-rose-500">₪{selectedStudent.balance}</div>
                         </div>
-                        <div className="grid grid-cols-2 gap-4 text-sm text-slate-400 text-right">
-                            <div dir="ltr">📞 {selectedStudent.phone}</div>
-                            <div>🆔 {selectedStudent.idNum}</div>
-                            <div>🏠 {selectedStudent.address}</div>
-                            <div className="text-indigo-400 font-bold text-lg">🏁 שיעורים: {selectedStudent.actualLessons?.toFixed(1)}</div>
+
+                        <div className="grid grid-cols-1 gap-3 text-sm">
+                            <div onClick={() => updateStudentField('phone', 'טלפון')} className="bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">📞 {selectedStudent.phone || 'הזן טלפון'}</div>
+                            <div onClick={() => updateStudentField('idNum', 'ת"ז')} className="bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">🆔 {selectedStudent.idNum || 'הזן ת"ז'}</div>
+                            <div onClick={() => updateStudentField('address', 'כתובת')} className="bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">🏠 {selectedStudent.address || 'הזן כתובת'}</div>
                         </div>
-                        
-                        <div className="flex gap-2 mt-8">
-                            <button onClick={handleAddLesson} className="flex-1 bg-indigo-600 p-4 rounded-2xl font-bold shadow-lg shadow-indigo-500/20 active:scale-95 transition-transform">+ קביעת שיעור</button>
-                            <button onClick={handleAddPayment} className="flex-1 bg-emerald-600 p-4 rounded-2xl font-bold shadow-lg shadow-emerald-500/20 active:scale-95 transition-transform">₪ הזנת תשלום</button>
+
+                        <div className="mt-6 flex items-center justify-between bg-indigo-500/10 p-4 rounded-2xl border border-indigo-500/20">
+                            <span className="text-indigo-400 font-bold uppercase text-xs tracking-widest">סה"כ שיעורים שבוצעו</span>
+                            <span className="text-2xl font-black text-indigo-400">{selectedStudent.actualLessons?.toFixed(1)}</span>
+                        </div>
+
+                        <div className="flex gap-2 mt-6">
+                            <button onClick={handleAddLesson} className="flex-1 bg-indigo-600 p-4 rounded-2xl font-bold shadow-lg">+ קביעת שיעור</button>
+                            <button onClick={handleAddPayment} className="flex-1 bg-emerald-600 p-4 rounded-2xl font-bold shadow-lg">₪ תשלום</button>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 mb-8">
-                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-center">
-                            <div className="text-xs mb-2 text-slate-400 uppercase font-bold">טסט פנימי</div>
-                            <select className="bg-slate-700 rounded-xl p-2 w-full text-white outline-none" value={selectedStudent.internalTest} onChange={(e)=>updateTestStatus('internalTest', e.target.value)}>
+                    <div className="grid grid-cols-2 gap-4 mb-8">
+                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                            <p className="text-[10px] uppercase font-bold text-slate-500 mb-2">טסט פנימי</p>
+                            <select className="bg-slate-700 w-full p-2 rounded-lg text-sm" value={selectedStudent.internalTest} onChange={(e)=>updateTest( 'internalTest', e.target.value)}>
                                 <option>טרם</option><option>עבר</option><option>נכשל</option>
                             </select>
                         </div>
-                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-center">
-                            <div className="text-xs mb-2 text-slate-400 uppercase font-bold">טסט חיצוני</div>
-                            <select className="bg-slate-700 rounded-xl p-2 w-full text-white outline-none" value={selectedStudent.externalTest} onChange={(e)=>updateTestStatus('externalTest', e.target.value)}>
+                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                            <p className="text-[10px] uppercase font-bold text-slate-500 mb-2">טסט חיצוני</p>
+                            <select className="bg-slate-700 w-full p-2 rounded-lg text-sm" value={selectedStudent.externalTest} onChange={(e)=>updateTest( 'externalTest', e.target.value)}>
                                 <option>טרם</option><option>עבר</option><option>נכשל</option>
                             </select>
                         </div>
                     </div>
 
-                    <h3 className="font-bold mb-4 text-slate-400 uppercase tracking-widest text-sm px-2">היסטוריית פעולות</h3>
-                    <div className="space-y-3 px-1">
+                    <h3 className="font-bold text-slate-500 text-xs uppercase tracking-[0.2em] mb-4 px-2">היסטוריה אחרונה</h3>
+                    <div className="space-y-3">
                         {transactions.map(t => (
-                            <div key={t.id} className="bg-slate-800/40 p-5 rounded-2xl border border-slate-700/50 flex justify-between items-center">
-                                <div className="text-right">
-                                    <div className="font-bold text-slate-200">{t.type === 'lesson' ? '📖 שיעור נהיגה' : `💰 תשלום (${t.method})`}</div>
-                                    <div className="text-[10px] text-slate-500 mt-1">{new Date(t.date).toLocaleString('he-IL')}</div>
+                            <div key={t.id} className="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50 flex justify-between items-center">
+                                <div>
+                                    <div className="font-bold text-sm">{t.type === 'lesson' ? '📖 שיעור נהיגה' : `💰 תשלום (${t.method})`}</div>
+                                    <div className="text-[10px] text-slate-500">{new Date(t.date).toLocaleString('he-IL')}</div>
                                 </div>
-                                <div className="text-left">
-                                    <div className={`text-lg font-black ${t.type === 'lesson' ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                        {t.type === 'lesson' ? `+₪${t.amount}` : `-₪${t.amount}`}
-                                    </div>
-                                    {t.status === 'upcoming' && <div className="text-[9px] bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full mt-1 font-bold text-center">מתוזמן</div>}
+                                <div className={`font-black ${t.type === 'lesson' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                    {t.type === 'lesson' ? `+₪${t.amount}` : `-₪${t.amount}`}
                                 </div>
                             </div>
                         ))}
@@ -208,32 +224,63 @@
                 </div>
             );
 
+            // תצוגת דף הבית (תלמידים או יומן)
             return (
-                <div className="p-4 max-w-2xl mx-auto min-h-screen">
-                    <div className="flex justify-between items-center mb-10 pt-6 px-2">
-                        <div>
-                            <h1 className="text-3xl font-black italic tracking-tighter text-slate-100">DRIVE<span className="text-indigo-500">PRO</span></h1>
-                            <p className="text-[10px] font-bold text-slate-500 tracking-[0.3em] uppercase">Control Panel</p>
-                        </div>
-                        <button onClick={handleAddStudent} className="bg-indigo-600 w-14 h-14 rounded-2xl text-3xl font-light shadow-xl shadow-indigo-500/20 active:scale-90 transition-transform flex items-center justify-center">+</button>
-                    </div>
+                <div className="min-h-screen pb-32">
+                    <header className="p-6 pt-10 flex justify-between items-center">
+                        <h1 className="text-3xl font-black italic tracking-tighter">DRIVE<span className="text-indigo-500">PRO</span></h1>
+                        {activeTab === 'students' && (
+                            <button onClick={handleQuickAddStudent} className="bg-indigo-600 w-12 h-12 rounded-2xl flex items-center justify-center text-3xl font-light shadow-xl shadow-indigo-500/20">+</button>
+                        )}
+                    </header>
 
-                    <div className="grid gap-4 mb-32">
-                        {students.map(s => (
-                            <div key={s.id} onClick={() => loadStudentData(s)} 
-                                className="bg-slate-800 p-6 rounded-[2.5rem] border border-slate-700/50 flex justify-between items-center active:scale-[0.98] transition-all shadow-xl">
-                                <div className="text-right">
-                                    <div className="text-xl font-black text-slate-100">{s.name}</div>
-                                    <div className="text-xs text-slate-500 mt-1 font-medium italic">שיעורים: {s.actualLessons?.toFixed(1) || 0}</div>
+                    <main className="px-4">
+                        {activeTab === 'students' ? (
+                            <div className="grid gap-4">
+                                {students.map(s => (
+                                    <div key={s.id} onClick={() => openStudentProfile(s)} className="bg-slate-800 p-6 rounded-[2.5rem] border border-slate-700/50 flex justify-between items-center shadow-lg active:scale-95 transition-transform">
+                                        <div>
+                                            <div className="text-xl font-black">{s.name}</div>
+                                            <div className="text-xs text-slate-500 mt-1 italic">שיעורים: {s.actualLessons?.toFixed(1) || 0}</div>
+                                        </div>
+                                        <div className={`text-2xl font-black ${s.balance > 0 ? 'text-rose-500' : 'text-emerald-400'}`}>₪{s.balance}</div>
+                                    </div>
+                                ))}
+                                <div className="mt-10 text-center text-slate-600 text-[10px] uppercase tracking-widest font-bold italic">
+                                    סה"כ חוב תלמידים: ₪{students.reduce((a,b)=>a+(b.balance || 0), 0)}
                                 </div>
-                                <div className={`text-2xl font-black ${s.balance > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>₪{s.balance}</div>
                             </div>
-                        ))}
-                    </div>
+                        ) : (
+                            <div className="grid gap-4">
+                                <h2 className="text-xl font-black mb-2 px-2 underline decoration-indigo-500 decoration-4 underline-offset-8">יומן שיעורים מתוזמנים</h2>
+                                {fullSchedule.map(l => (
+                                    <div key={l.id} className={`bg-slate-800 p-5 rounded-3xl border-r-8 flex justify-between items-center ${l.status === 'upcoming' ? 'border-indigo-500' : 'border-emerald-500/50'}`}>
+                                        <div>
+                                            <div className="font-black text-indigo-300">{l.studentName}</div>
+                                            <div className="text-xs font-bold text-slate-400 mt-1">
+                                                {new Date(l.date).toLocaleDateString('he-IL')} בשעה {new Date(l.date).toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit'})}
+                                            </div>
+                                        </div>
+                                        <div className={`text-[10px] font-black uppercase px-3 py-1 rounded-full ${l.status === 'upcoming' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                                            {l.status === 'upcoming' ? 'עתידי' : 'בוצע'}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </main>
 
-                    <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-indigo-600 px-10 py-4 rounded-[2rem] font-black shadow-[0_20px_50px_rgba(79,70,229,0.3)] whitespace-nowrap z-50 border border-indigo-400/30">
-                        <span className="opacity-70 text-xs ml-2 font-normal">חוב כולל:</span> ₪{students.reduce((a,b)=>a+(b.balance || 0), 0)}
-                    </div>
+                    {/* סרגל ניווט תחתון */}
+                    <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 p-4 flex justify-around items-center z-50">
+                        <button onClick={() => {setActiveTab('students'); setView('list');}} className={`flex flex-col items-center gap-1 ${activeTab === 'students' ? 'text-indigo-500 font-black' : 'text-slate-500 font-bold'}`}>
+                            <span className="text-2xl">👥</span>
+                            <span className="text-[10px] uppercase tracking-tighter">תלמידים</span>
+                        </button>
+                        <button onClick={() => {setActiveTab('schedule'); setView('list');}} className={`flex flex-col items-center gap-1 ${activeTab === 'schedule' ? 'text-indigo-500 font-black' : 'text-slate-500 font-bold'}`}>
+                            <span className="text-2xl">🗓️</span>
+                            <span className="text-[10px] uppercase tracking-tighter">יומן עבודה</span>
+                        </button>
+                    </nav>
                 </div>
             );
         }
