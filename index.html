@@ -8,7 +8,7 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- ספריות PDF -->
+    <!-- ספריות עזר -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
 
@@ -102,67 +102,10 @@
                 }
             };
 
-            // --- פונקציות כרטסת (PDF & WhatsApp) ---
-            const exportLedgerPDF = (isDownload = true) => {
-                const doc = new jspdf.jsPDF();
-                const filtered = allTransactions.filter(t => t.studentId === selectedStudent.id);
-                
-                // עיצוב PDF מקצועי באנגלית
-                doc.setFontSize(20);
-                doc.text("DRIVEPRO - STUDENT STATEMENT", 10, 20);
-                doc.setFontSize(12);
-                doc.text(`Student Name: ${selectedStudent.name}`, 10, 30);
-                doc.text(`Total Balance: NIS ${selectedStudent.balance}`, 10, 38);
-                doc.text(`Date Issued: ${new Date().toLocaleDateString()}`, 10, 46);
-
-                const rows = filtered.map(t => [
-                    new Date(t.date).toLocaleDateString(),
-                    t.type === 'lesson' ? (t.status === 'cancelled' ? 'Lesson (Cancelled)' : 'Driving Lesson') : `Payment (${t.method || 'General'})`,
-                    t.type === 'lesson' ? `+${t.amount}` : `-${t.amount}`
-                ]);
-
-                doc.autoTable({
-                    head: [['Date', 'Description', 'Amount (NIS)']],
-                    body: rows,
-                    startY: 55,
-                    theme: 'grid',
-                    headStyles: { fillStyle: [79, 70, 229] }
-                });
-
-                if (isDownload) {
-                    doc.save(`Ledger_${selectedStudent.name}.pdf`);
-                } else {
-                    window.open(doc.output('bloburl'), '_blank');
-                }
-            };
-
-            const sendLedgerWA = () => {
-                const filtered = allTransactions.filter(t => t.studentId === selectedStudent.id).slice(0, 10);
-                let msg = `*DrivePro - סיכום כרטסת עבור ${selectedStudent.name}*%0A%0A`;
-                msg += `יתרה לתשלום: *₪${selectedStudent.balance}*%0A`;
-                msg += `סה"כ שיעורים: ${selectedStudent.lessons}%0A%0A`;
-                msg += `*תנועות אחרונות:*%0A`;
-                filtered.forEach(t => {
-                    msg += `${new Date(t.date).toLocaleDateString('he-IL')} | ${t.type === 'lesson' ? 'שיעור' : 'תשלום'} | ${t.amount}₪%0A`;
-                });
-                msg += `%0Aלצפייה ב-PDF המלא פנה למורה.`;
-                
-                const phone = selectedStudent.phone ? selectedStudent.phone.replace(/\D/g, '') : '';
-                const finalPhone = phone.startsWith('0') ? '972' + phone.substring(1) : phone;
-                window.open(`https://wa.me/${finalPhone}?text=${msg}`, '_blank');
-            };
-
             const handleDeleteStudent = async (id) => {
                 if(!confirm("מחיקת תלמיד?")) return;
                 await window.fs.deleteDoc(window.fs.doc(window.db, "students", id));
                 setView('main'); loadData();
-            };
-
-            const updateStudentField = async (field, label) => {
-                const val = prompt(`עדכן ${label}:`, selectedStudent[field] || "");
-                if (val === null) return;
-                await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), { [field]: val });
-                setSelectedStudent({...selectedStudent, [field]: val}); loadData();
             };
 
             const handleAddStudent = async () => {
@@ -201,52 +144,14 @@
             };
 
             if (!isAuthenticated) return (
-                <div className="flex flex-col items-center justify-center h-screen bg-slate-950 text-white p-6 text-center">
+                <div className="flex flex-col items-center justify-center h-screen bg-slate-950 text-white p-6">
                     <h1 className="text-4xl font-black mb-8 text-indigo-500 italic uppercase">Drive Pro</h1>
                     <input type="password" placeholder="קוד גישה" className="bg-slate-900 border-2 border-indigo-500 text-white text-center text-4xl p-4 rounded-3xl w-full max-w-xs outline-none"
                            onChange={(e) => e.target.value === SECRET_PIN && setIsAuthenticated(true)} />
                 </div>
             );
 
-            // --- VIEW: LEDGER OPTIONS (המסך החדש) ---
-            if (view === 'ledger-options' && selectedStudent) return (
-                <div className="p-6 max-w-md mx-auto min-h-screen flex flex-col justify-center text-center">
-                    <button onClick={() => setView('select-ledger-student')} className="mb-10 text-blue-400 font-bold self-start">← חזרה לרשימה</button>
-                    <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl mb-10">
-                        <h2 className="text-3xl font-black mb-2">{selectedStudent.name}</h2>
-                        <div className="text-emerald-500 font-bold text-xl mb-6">יתרה: ₪{selectedStudent.balance}</div>
-                        <div className="space-y-4">
-                            <button onClick={() => setView('ledger-view')} className="w-full bg-slate-800 text-white p-5 rounded-3xl font-black border border-slate-700 shadow-lg active:scale-95 transition-all">📂 צפה בכרטסת</button>
-                            <button onClick={() => exportLedgerPDF(true)} className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black shadow-lg active:scale-95 transition-all">📥 הורד כרטסת (PDF)</button>
-                            <button onClick={sendLedgerWA} className="w-full bg-emerald-600 text-white p-5 rounded-3xl font-black shadow-lg active:scale-95 transition-all">💬 שלח כרטסת (WhatsApp)</button>
-                        </div>
-                    </div>
-                </div>
-            );
-
-            // --- VIEW: LEDGER VIEW (צפייה במסך) ---
-            if (view === 'ledger-view' && selectedStudent) return (
-                <div className="p-6 max-w-md mx-auto min-h-screen">
-                    <button onClick={() => setView('ledger-options')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
-                    <h2 className="text-2xl font-black mb-6 italic">פירוט תנועות: {selectedStudent.name}</h2>
-                    <div className="space-y-3">
-                        {allTransactions.filter(t => t.studentId === selectedStudent.id).map(t => (
-                            <div key={t.id} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex justify-between items-center text-xs">
-                                <div className="text-right">
-                                    <div className={`font-bold ${t.type === 'lesson' ? 'text-slate-100' : 'text-emerald-400'}`}>
-                                        {t.type === 'lesson' ? '📖 שיעור נהיגה' : `💰 תשלום (${t.method})`}
-                                    </div>
-                                    <div className="text-slate-500">{new Date(t.date).toLocaleDateString('he-IL')}</div>
-                                </div>
-                                <div className={`font-black text-sm ${t.type === 'lesson' ? 'text-red-400' : 'text-emerald-400'}`}>
-                                    {t.type === 'lesson' ? `+₪${t.amount}` : `-₪${t.amount}`}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            );
-
+            // --- VIEW: STUDENT HISTORY ---
             if (view === 'student-history' && selectedStudent) return (
                 <div className="p-6 max-w-md mx-auto">
                     <button onClick={() => setView('student-details')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
@@ -255,9 +160,11 @@
                         {allTransactions.filter(t => t.studentId === selectedStudent.id && t.type === 'lesson').map(l => (
                             <div key={l.id} className={`bg-slate-900 p-5 rounded-2xl border-r-8 flex justify-between items-center ${l.status === 'completed' ? 'border-emerald-500' : l.status === 'cancelled' ? 'border-red-500' : 'border-slate-500'}`}>
                                 <div className="text-right flex-1">
-                                    <div className={`font-black ${l.status === 'completed' ? 'text-emerald-400' : l.status === 'cancelled' ? 'text-red-400' : 'text-slate-400'}`}>שיעור נהיגה {l.status === 'cancelled' ? '(מבוטל)' : ''}</div>
+                                    <div className={`font-black ${l.status === 'completed' ? 'text-emerald-400' : l.status === 'cancelled' ? 'text-red-400' : 'text-slate-400'}`}>
+                                        שיעור נהיגה {l.status === 'cancelled' ? '(מבוטל)' : ''}
+                                    </div>
                                     <div className="text-[10px] text-slate-500">{new Date(l.date).toLocaleString('he-IL')}</div>
-                                    {l.cancelReason && <div className="text-[10px] text-red-500 italic">סיבה: {l.cancelReason}</div>}
+                                    {l.cancelReason && <div className="text-[10px] text-red-500 mt-1 italic">סיבה: {l.cancelReason}</div>}
                                 </div>
                                 <div className="flex flex-col items-end gap-2">
                                     <div className="font-black text-slate-200">₪{l.amount}</div>
@@ -287,25 +194,27 @@
             if (view === 'student-details' && selectedStudent) return (
                 <div className="p-6 max-w-md mx-auto">
                     <button onClick={() => setView('main')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
-                    <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl mb-8 text-right">
+                    <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl mb-8">
                         <h2 className="text-3xl font-black text-white mb-6 italic">{selectedStudent.name}</h2>
-                        <div className="space-y-3 text-slate-400 text-xs mb-8">
+                        <div className="space-y-3 text-slate-400 text-xs mb-8 text-right">
                             <p>📞 טלפון: <span className="text-slate-200">{selectedStudent.phone || '---'}</span></p>
                             <p>🆔 ת"ז: <span className="text-slate-200">{selectedStudent.idNum || '---'}</span></p>
                         </div>
                         <div className="flex justify-between border-t border-slate-800 pt-6">
-                            <div onClick={() => { setSelectedStudent(selectedStudent); setView('ledger-options'); }} className="text-center flex-1 border-l border-slate-800 cursor-pointer">
-                                <p className="text-[10px] text-slate-500 font-bold mb-1 underline">חוב</p>
+                            <div onClick={() => alert('כרטסת תלמיד - לחיצה על חוב')} className="text-center flex-1 border-l border-slate-800">
+                                <p className="text-[10px] text-slate-500 font-bold mb-1">חוב</p>
                                 <p className={`text-2xl font-black ${selectedStudent.balance > 0 ? 'text-red-500' : 'text-emerald-500'}`}>₪{selectedStudent.balance}</p>
                             </div>
                             <div onClick={() => setView('student-history')} className="text-center flex-1 cursor-pointer">
                                 <p className="text-[10px] text-blue-500 font-black mb-1 underline uppercase tracking-tighter">שיעורים ➔</p>
-                                <p className="text-2xl font-black text-slate-100">{selectedStudent.lessons || 0}</p>
+                                <p className="text-2xl font-black text-slate-100">{selectedStudent.lessons}</p>
                             </div>
                         </div>
                     </div>
-                    <div className="flex gap-4 mb-10"><button onClick={() => { setLessonForm({dateTime: new Date().toISOString().slice(0,16), price: '200'}); setView('add-lesson'); }} className="flex-1 bg-blue-600 text-white py-4 rounded-[1.8rem] font-black">+ שיעור</button><button onClick={() => handleAddPayment(selectedStudent.id)} className="flex-1 bg-emerald-600 text-white py-4 rounded-[1.8rem] font-black">₪ תשלום</button></div>
-                    <button onClick={() => handleDeleteStudent(selectedStudent.id)} className="w-full text-red-900 text-[10px] font-bold uppercase opacity-30">מחיקת תלמיד</button>
+                    <div className="flex gap-4">
+                        <button onClick={() => { setLessonForm({dateTime: new Date().toISOString().slice(0,16), price: '200'}); setView('add-lesson'); }} className="flex-1 bg-blue-600 text-white py-4 rounded-[1.8rem] font-black">+ שיעור</button>
+                        <button onClick={() => handleAddPayment(selectedStudent.id)} className="flex-1 bg-emerald-600 text-white py-4 rounded-[1.8rem] font-black">₪ תשלום</button>
+                    </div>
                 </div>
             );
 
@@ -314,4 +223,71 @@
                     <button onClick={() => setView('student-details')} className="mb-8 text-blue-400 font-bold self-start block">← ביטול</button>
                     <div className="space-y-6 bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800">
                         <input className="w-full p-4 bg-slate-800 rounded-2xl border border-slate-700 outline-none text-center font-bold" type="datetime-local" value={lessonForm.dateTime} onChange={e=>setLessonForm({...lessonForm, dateTime: e.target.value})} />
-                        <input className="w-full p-4 bg-slate-800 rounded-2xl border border-slate-700 outline-none text-center text-xl font-black text-emerald-400" type
+                        <input className="w-full p-4 bg-slate-800 rounded-2xl border border-slate-700 outline-none text-center text-xl font-black text-emerald-400" type="number" value={lessonForm.price} onChange={e=>setLessonForm({...lessonForm, price: e.target.value})} />
+                        <button className="w-full bg-blue-600 text-white p-5 rounded-2xl font-black shadow-xl" onClick={handleConfirmLesson}>אשר שיעור</button>
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="p-4 max-w-md mx-auto pb-32 text-right">
+                    <header className="flex justify-between items-center mb-8 pt-6 px-4 italic">
+                        <h1 className="text-3xl font-black text-slate-100 tracking-tighter italic uppercase">Drive<span className="text-blue-500">Pro</span></h1>
+                        <div className="text-[10px] font-black text-slate-500 bg-slate-900 px-4 py-2 rounded-full border border-slate-800">
+                             חוב כולל: <span className="text-emerald-500">₪{students.reduce((a,b)=>a+(b.balance||0),0)}</span>
+                        </div>
+                    </header>
+
+                    <h2 className="text-xl font-black text-slate-100 mb-4 px-2 italic">יומן עבודה</h2>
+                    <div className="bg-slate-900 p-5 rounded-[2.5rem] mb-8 border border-slate-800 shadow-2xl">
+                        <div className="flex justify-between items-center mb-4 px-2">
+                            <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}>◀</button>
+                            <h3 className="font-black italic text-xs uppercase text-slate-100">{new Intl.DateTimeFormat('he-IL', { month: 'long', year: 'numeric' }).format(currentMonth)}</h3>
+                            <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}>▶</button>
+                        </div>
+                        <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-600 mb-2 italic"><div>א'</div><div>ב'</div><div>ג'</div><div>ד'</div><div>ה'</div><div>ו'</div><div>ש'</div></div>
+                        <div className="grid grid-cols-7 gap-1 mb-6">
+                            {(() => {
+                                const days = [];
+                                const first = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay();
+                                const count = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate();
+                                const todayStr = new Date().toISOString().split('T')[0];
+                                for (let i = 0; i < first; i++) days.push(<div key={`e-${i}`} className="h-10"></div>);
+                                for (let d = 1; d <= count; d++) {
+                                    const ds = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                                    const has = allTransactions.some(t => t.type === 'lesson' && t.date.startsWith(ds));
+                                    const isToday = ds === todayStr;
+                                    days.push(<div key={d} onClick={() => setSelectedDate(ds)} className={`h-10 flex flex-col items-center justify-center rounded-xl text-xs cursor-pointer transition-all active:scale-90 ${isToday ? 'ring-2 ring-yellow-500' : ''} ${selectedDate === ds ? 'bg-blue-600 text-white font-black' : 'text-slate-300'}`}>{d}{has && <div className="calendar-dot"></div>}</div>);
+                                }
+                                return days;
+                            })()}
+                        </div>
+                        <div className="space-y-2 border-t border-slate-800 pt-4">
+                            {allTransactions.filter(t => t.type === 'lesson' && t.date.startsWith(selectedDate)).map(l => (
+                                <div key={l.id} 
+                                     onClick={() => jumpToStudentHistory(l)}
+                                     className={`text-xs flex justify-between p-3 rounded-2xl border border-slate-700/30 active:scale-95 transition-all ${l.status === 'cancelled' ? 'bg-red-900/20 border-red-900/40 opacity-70' : 'bg-slate-800/50'}`}>
+                                    <div className="text-right">
+                                        <div className={`font-bold ${l.status === 'cancelled' ? 'text-red-400' : 'text-slate-200'}`}>{l.studentName}</div>
+                                        {l.status === 'cancelled' && <div className="text-[8px] text-red-500 italic">מבוטל: {l.cancelReason}</div>}
+                                    </div>
+                                    <span className={`font-black ${l.status === 'cancelled' ? 'text-red-400' : 'text-blue-400'}`}>{new Date(l.date).toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit'})}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 px-2">
+                        <button onClick={() => setView('add-student')} className="bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex flex-col items-center gap-2 active:scale-95 transition-all"><span className="text-2xl text-blue-500">+</span> <span className="text-[10px] uppercase tracking-tighter">הוספת תלמיד</span></button>
+                        <button onClick={() => { setSearchTerm(''); setView('student-list'); }} className="bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex flex-col items-center gap-2 active:scale-95 transition-all"><span className="text-2xl text-indigo-500">👥</span> <span className="text-[10px] uppercase tracking-tighter">רשימת תלמידים</span></button>
+                        <button onClick={() => { setSearchTerm(''); setView('select-ledger-student'); }} className="col-span-2 bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex items-center justify-center gap-4 active:scale-95 transition-all italic text-xs uppercase tracking-widest"><span className="text-2xl">📋</span> כרטסת תלמיד</button>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
