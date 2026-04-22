@@ -64,107 +64,74 @@
             }, [isAuthenticated]);
 
             const loadData = async () => {
-                const qS = window.fs.query(window.fs.collection(window.db, "students"), window.fs.orderBy("name"));
-                const snapS = await window.fs.getDocs(qS);
-                setStudents(snapS.docs.map(d => ({ id: d.id, ...d.data() })));
-                
-                const qL = window.fs.query(window.fs.collection(window.db, "transactions"), window.fs.orderBy("date", "desc"));
-                const snapL = await window.fs.getDocs(qL);
-                setAllTransactions(snapL.docs.map(d => ({ id: d.id, ...d.data() })));
+                try {
+                    const qS = window.fs.query(window.fs.collection(window.db, "students"), window.fs.orderBy("name"));
+                    const snapS = await window.fs.getDocs(qS);
+                    setStudents(snapS.docs.map(d => ({ id: d.id, ...d.data() })));
+                    
+                    const qL = window.fs.query(window.fs.collection(window.db, "transactions"), window.fs.orderBy("date", "desc"));
+                    const snapL = await window.fs.getDocs(qL);
+                    setAllTransactions(snapL.docs.map(d => ({ id: d.id, ...d.data() })));
+                } catch(e) { console.error(e); }
             };
 
-            const jumpToStudentHistory = (lesson) => {
-                const student = students.find(s => s.id === lesson.studentId);
-                if (student) { setSelectedStudent(student); setView('student-history'); }
-            };
-
-            const handleEditLesson = async (lesson) => {
-                const action = prompt("עריכת שיעור: 1-שינוי תאריך/שעה, 2-ביטול שיעור", "1");
-                if (action === "1") {
-                    const newTime = prompt("הזן תאריך ושעה (YYYY-MM-DD HH:MM)", lesson.date.slice(0,16).replace('T', ' '));
-                    if (newTime) {
-                        const iso = new Date(newTime.replace(' ', 'T')).toISOString();
-                        await window.fs.updateDoc(window.fs.doc(window.db, "transactions", lesson.id), { 
-                            date: iso, status: new Date(iso) > new Date() ? 'upcoming' : 'completed'
-                        });
-                        loadData();
+            const handleSaveStudent = async () => {
+                if(!newStudent.name) return alert("נא להזין שם מלא");
+                try {
+                    if (isEditing && selectedStudent) {
+                        await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), newStudent);
+                    } else {
+                        await window.fs.addDoc(window.fs.collection(window.db, "students"), { ...newStudent, balance: 0, lessons: 0 });
                     }
-                } else if (action === "2") {
-                    const reason = prompt("מהי סיבת הביטול?");
-                    if (reason !== null) {
-                        await window.fs.updateDoc(window.fs.doc(window.db, "transactions", lesson.id), { 
-                            status: 'cancelled', cancelReason: reason || "בוטל"
-                        });
-                        loadData();
-                    }
-                }
+                    setNewStudent({ name: '', idNum: '', dob: '', address: '', phone: '', school: '', greenForm: 'לא', theory: 'לא' });
+                    setIsEditing(false); setView('main'); loadData();
+                } catch(e) { alert("שגיאה בשמירה"); }
             };
 
-            const generatePDF = (student, transactions) => {
+            const openEditStudent = (student) => {
+                setSelectedStudent(student);
+                setNewStudent({ 
+                    name: student.name || '', 
+                    idNum: student.idNum || '', 
+                    dob: student.dob || '', 
+                    address: student.address || '', 
+                    phone: student.phone || '',
+                    school: student.school || '',
+                    greenForm: student.greenForm || 'לא',
+                    theory: student.theory || 'לא'
+                });
+                setIsEditing(true); setView('add-student');
+            };
+
+            const downloadLedgerPDF = () => {
                 const doc = new jspdf.jsPDF();
-                const filtered = transactions.filter(t => t.studentId === student.id).sort((a,b) => new Date(b.date) - new Date(a.date));
-                doc.setFontSize(22);
+                const filtered = allTransactions.filter(t => t.studentId === selectedStudent.id);
+                doc.setFontSize(20);
                 doc.text("DRIVEPRO STATEMENT", 10, 20);
                 doc.setFontSize(12);
-                doc.text(`Student: ${student.name}`, 10, 30);
-                doc.text(`Balance: NIS ${student.balance}`, 10, 38);
-                const rows = filtered.map(t => [new Date(t.date).toLocaleDateString(), t.type, t.amount]);
-                doc.autoTable({ head: [['Date', 'Description', 'Amount']], body: rows, startY: 50 });
-                return doc;
-            };
-
-            const downloadLedger = () => {
-                const doc = generatePDF(selectedStudent, allTransactions);
-                doc.save(`${selectedStudent.name}_Ledger.pdf`);
+                doc.text(`Student: ${selectedStudent.name}`, 10, 30);
+                doc.text(`Balance: NIS ${selectedStudent.balance}`, 10, 38);
+                const rows = filtered.map(t => [new Date(t.date).toLocaleDateString(), t.type === 'lesson' ? 'Driving Lesson' : 'Payment', t.amount]);
+                doc.autoTable({ head: [['Date', 'Description', 'Amount']], body: rows, startY: 45 });
+                doc.save(`${selectedStudent.name}_ledger.pdf`);
             };
 
             const sendWhatsAppLedger = () => {
                 const phone = selectedStudent.phone ? selectedStudent.phone.replace(/\D/g, '') : '';
                 const finalPhone = phone.startsWith('0') ? '972' + phone.substring(1) : phone;
-                const msg = `סיכום כרטסת: ${selectedStudent.name}. יתרה: ₪${selectedStudent.balance}`;
+                const msg = `*סיכום כרטסת DrivePro:* ${selectedStudent.name}%0A*יתרה: ₪${selectedStudent.balance}*%0Aשיעורים שבוצעו: ${selectedStudent.lessons || 0}`;
                 window.open(`https://wa.me/${finalPhone}?text=${msg}`, '_blank');
-            };
-
-            const handleDeleteStudent = async (id) => {
-                if(!confirm("מחיקת תלמיד?")) return;
-                await window.fs.deleteDoc(window.fs.doc(window.db, "students", id));
-                setView('main'); loadData();
-            };
-
-            const updateStudentField = async (field, label) => {
-                const val = prompt(`עדכן ${label}:`, selectedStudent[field] || "");
-                if (val === null) return;
-                await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), { [field]: val });
-                setSelectedStudent({...selectedStudent, [field]: val}); loadData();
-            };
-
-            const handleSaveStudent = async () => {
-                if(!newStudent.name) return alert("שם חובה");
-                if (isEditing && selectedStudent) {
-                    await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), newStudent);
-                } else {
-                    await window.fs.addDoc(window.fs.collection(window.db, "students"), { ...newStudent, balance: 0, lessons: 0 });
-                }
-                setNewStudent({ name: '', idNum: '', dob: '', address: '', phone: '', school: '', greenForm: 'לא', theory: 'לא' });
-                setIsEditing(false);
-                setView('main'); loadData();
-            };
-
-            const openEditStudent = (student) => {
-                setSelectedStudent(student);
-                setNewStudent({ ...student });
-                setIsEditing(true);
-                setView('add-student');
             };
 
             const handleConfirmLesson = async () => {
                 const { dateTime, price } = lessonForm;
                 if(!dateTime) return;
                 const isoDate = new Date(dateTime).toISOString();
+                const isUpcoming = new Date(dateTime) > new Date();
                 await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
-                    studentId: selectedStudent.id, studentName: selectedStudent.name, type: 'lesson', amount: Number(price), date: isoDate, status: new Date(isoDate) > new Date() ? 'upcoming' : 'completed'
+                    studentId: selectedStudent.id, studentName: selectedStudent.name, type: 'lesson', amount: Number(price), date: isoDate, status: isUpcoming ? 'upcoming' : 'completed'
                 });
-                if(new Date(isoDate) <= new Date()) {
+                if(!isUpcoming) {
                     await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), {
                         balance: window.fs.increment(Number(price)), lessons: window.fs.increment(1)
                     });
@@ -172,20 +139,24 @@
                 setView('student-details'); loadData();
             };
 
-            const handleAddPayment = async (studentId) => {
-                const amount = prompt("סכום תשלום?");
-                const method = prompt("1-מזומן, 2-אשראי, 3-ביט, 4-העברה, 5-שיק", "3");
-                const methods = {"1":"מזומן", "2":"אשראי", "3":"ביט", "4":"העברה", "5":"שיק"};
-                if(!amount) return;
-                await window.fs.addDoc(window.fs.collection(window.db, "transactions"), {
-                    studentId, type: 'payment', amount: Number(amount), date: new Date().toISOString(), method: methods[method] || "מזומן"
-                });
-                await window.fs.updateDoc(window.fs.doc(window.db, "students", studentId), { balance: window.fs.increment(-Number(amount)) });
-                loadData();
+            const handleEditLessonAction = async (lesson) => {
+                const action = prompt("1-שינוי זמן, 2-ביטול", "1");
+                if(action === "1") {
+                    const nt = prompt("זמן (YYYY-MM-DD HH:MM)", lesson.date.slice(0,16).replace('T',' '));
+                    if(nt) {
+                        const iso = new Date(nt.replace(' ','T')).toISOString();
+                        await window.fs.updateDoc(window.fs.doc(window.db, "transactions", lesson.id), { date: iso, status: new Date(iso) > new Date() ? 'upcoming' : 'completed' });
+                        loadData();
+                    }
+                } else if(action === "2") {
+                    const r = prompt("סיבת הביטול?");
+                    await window.fs.updateDoc(window.fs.doc(window.db, "transactions", lesson.id), { status: 'cancelled', cancelReason: r || "בוטל" });
+                    loadData();
+                }
             };
 
             if (!isAuthenticated) return (
-                <div className="flex flex-col items-center justify-center h-screen bg-slate-950 text-white p-6 text-center">
+                <div className="flex flex-col items-center justify-center h-screen bg-slate-950 p-6 text-center">
                     <h1 className="text-4xl font-black mb-8 text-indigo-500 italic uppercase">Drive Pro</h1>
                     <input type="password" placeholder="קוד גישה" className="bg-slate-900 border-2 border-indigo-500 text-white text-center text-4xl p-4 rounded-3xl w-full max-w-xs outline-none"
                            onChange={(e) => e.target.value === SECRET_PIN && setIsAuthenticated(true)} />
@@ -194,23 +165,23 @@
 
             if (view === 'ledger-options' && selectedStudent) return (
                 <div className="p-6 max-w-md mx-auto min-h-screen flex flex-col justify-center text-center">
-                    <button onClick={() => setView('select-ledger-student')} className="mb-10 text-blue-400 font-bold self-start">← חזרה</button>
+                    <button onClick={() => setView('main')} className="mb-10 text-blue-400 font-bold self-start">← חזרה</button>
                     <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl">
                         <h2 className="text-3xl font-black mb-2">{selectedStudent.name}</h2>
-                        <div className="text-emerald-500 font-bold text-xl mb-8 tracking-tight">יתרה: ₪{selectedStudent.balance}</div>
+                        <div className="text-emerald-500 font-bold text-xl mb-8 italic">יתרה: ₪{selectedStudent.balance}</div>
                         <div className="space-y-4">
-                            <button onClick={() => setView('ledger-view')} className="w-full bg-slate-800 text-white p-5 rounded-3xl font-black border border-slate-700 active:scale-95 transition-all">📂 הצג כרטסת</button>
-                            <button onClick={downloadLedger} className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black active:scale-95 transition-all">📥 הורד PDF</button>
-                            <button onClick={sendWhatsAppLedger} className="w-full bg-emerald-600 text-white p-5 rounded-3xl font-black active:scale-95 transition-all">💬 שלח בוואטסאפ</button>
+                            <button onClick={() => setView('ledger-view')} className="w-full bg-slate-800 text-white p-5 rounded-3xl font-bold border border-slate-700">📂 צפה בכרטסת</button>
+                            <button onClick={downloadLedgerPDF} className="w-full bg-blue-600 text-white p-5 rounded-3xl font-bold">📥 הורד PDF</button>
+                            <button onClick={sendWhatsAppLedger} className="w-full bg-emerald-600 text-white p-5 rounded-3xl font-bold">💬 שלח בוואטסאפ</button>
                         </div>
                     </div>
                 </div>
             );
 
             if (view === 'ledger-view' && selectedStudent) return (
-                <div className="p-6 max-w-md mx-auto">
+                <div className="p-6 max-w-md mx-auto min-h-screen">
                     <button onClick={() => setView('ledger-options')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
-                    <h2 className="text-2xl font-black mb-6 italic">{selectedStudent.name} - פירוט</h2>
+                    <h2 className="text-2xl font-black mb-6 italic">{selectedStudent.name}</h2>
                     <div className="space-y-3">
                         {allTransactions.filter(t => t.studentId === selectedStudent.id).map(t => (
                             <div key={t.id} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex justify-between items-center text-xs">
@@ -218,20 +189,18 @@
                                     <div className="font-bold text-slate-100">{t.type === 'lesson' ? '📖 שיעור' : '💰 תשלום'}</div>
                                     <div className="text-slate-500">{new Date(t.date).toLocaleDateString('he-IL')}</div>
                                 </div>
-                                <div className={`font-black text-sm ${t.type === 'lesson' ? 'text-red-400' : 'text-emerald-400'}`}>
-                                    {t.type === 'lesson' ? `+₪${t.amount}` : `-₪${t.amount}`}
-                                </div>
+                                <div className={`font-black text-sm ${t.type === 'lesson' ? 'text-red-400' : 'text-emerald-400'}`}>{t.type === 'lesson' ? `+₪${t.amount}` : `-₪${t.amount}`}</div>
                             </div>
                         ))}
                     </div>
                 </div>
             );
 
-            if (view === 'select-ledger-student' || view === 'student-list') return (
-                <div className="p-6 max-w-md mx-auto">
+            if (view === 'student-list' || view === 'select-ledger-student') return (
+                <div className="p-6 max-w-md mx-auto min-h-screen">
                     <button onClick={() => setView('main')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
                     <input autoFocus className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none mb-6 text-right font-bold" placeholder="🔍 חפש תלמיד..." onChange={e => setSearchTerm(e.target.value)} />
-                    <div className="space-y-3">
+                    <div className="space-y-3 text-right">
                         {students.filter(s => s.name.includes(searchTerm)).map(s => (
                             <div key={s.id} className="bg-slate-900 p-5 rounded-[2rem] border border-slate-800 flex justify-between items-center shadow-md">
                                 <div className="flex-1" onClick={() => { setSelectedStudent(s); setView(view === 'select-ledger-student' ? 'ledger-options' : 'student-details'); }}>
@@ -248,45 +217,41 @@
             if (view === 'add-student') return (
                 <div className="p-6 max-w-md mx-auto min-h-screen text-right pb-10">
                     <button onClick={() => {setView('main'); setIsEditing(false);}} className="mb-8 text-blue-400 font-bold">← ביטול</button>
-                    <h2 className="text-3xl font-black mb-8 text-white italic">{isEditing ? 'עדכון פרטים' : 'תלמיד חדש'}</h2>
+                    <h2 className="text-3xl font-black mb-8 text-white italic">{isEditing ? 'עדכון תלמיד' : 'תלמיד חדש'}</h2>
                     <div className="space-y-4">
                         <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="שם מלא *" value={newStudent.name} onChange={e=>setNewStudent({...newStudent, name: e.target.value})} />
                         <label className="block text-[10px] text-slate-500 mr-2 font-bold uppercase tracking-widest">תאריך לידה</label>
                         <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" type="date" value={newStudent.dob} onChange={e=>setNewStudent({...newStudent, dob: e.target.value})} />
-                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none text-right" placeholder="טלפון" type="tel" value={newStudent.phone} onChange={e=>setNewStudent({...newStudent, phone: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="טלפון" type="tel" value={newStudent.phone} onChange={e=>setNewStudent({...newStudent, phone: e.target.value})} />
                         <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="תעודת זהות" value={newStudent.idNum} onChange={e=>setNewStudent({...newStudent, idNum: e.target.value})} />
                         <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="כתובת" value={newStudent.address} onChange={e=>setNewStudent({...newStudent, address: e.target.value})} />
                         <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="בית ספר" value={newStudent.school} onChange={e=>setNewStudent({...newStudent, school: e.target.value})} />
-                        
                         <div className="grid grid-cols-2 gap-4">
-                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 text-center">
                                 <p className="text-[10px] text-slate-500 font-bold mb-2">טופס ירוק?</p>
                                 <div className="flex gap-2">
-                                    <button onClick={()=>setNewStudent({...newStudent, greenForm:'כן'})} className={`flex-1 p-2 rounded-xl font-bold ${newStudent.greenForm === 'כן' ? 'bg-indigo-600' : 'bg-slate-800'}`}>כן</button>
-                                    <button onClick={()=>setNewStudent({...newStudent, greenForm:'לא'})} className={`flex-1 p-2 rounded-xl font-bold ${newStudent.greenForm === 'לא' ? 'bg-indigo-600' : 'bg-slate-800'}`}>לא</button>
+                                    <button onClick={()=>setNewStudent({...newStudent, greenForm:'כן'})} className={`flex-1 py-2 rounded-xl font-bold ${newStudent.greenForm === 'כן' ? 'bg-indigo-600' : 'bg-slate-800'}`}>כן</button>
+                                    <button onClick={()=>setNewStudent({...newStudent, greenForm:'לא'})} className={`flex-1 py-2 rounded-xl font-bold ${newStudent.greenForm === 'לא' ? 'bg-indigo-600' : 'bg-slate-800'}`}>לא</button>
                                 </div>
                             </div>
-                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 text-center">
                                 <p className="text-[10px] text-slate-500 font-bold mb-2">תיאוריה?</p>
                                 <div className="flex gap-2">
-                                    <button onClick={()=>setNewStudent({...newStudent, theory:'כן'})} className={`flex-1 p-2 rounded-xl font-bold ${newStudent.theory === 'כן' ? 'bg-indigo-600' : 'bg-slate-800'}`}>כן</button>
-                                    <button onClick={()=>setNewStudent({...newStudent, theory:'לא'})} className={`flex-1 p-2 rounded-xl font-bold ${newStudent.theory === 'לא' ? 'bg-indigo-600' : 'bg-slate-800'}`}>לא</button>
+                                    <button onClick={()=>setNewStudent({...newStudent, theory:'כן'})} className={`flex-1 py-2 rounded-xl font-bold ${newStudent.theory === 'כן' ? 'bg-indigo-600' : 'bg-slate-800'}`}>כן</button>
+                                    <button onClick={()=>setNewStudent({...newStudent, theory:'לא'})} className={`flex-1 py-2 rounded-xl font-bold ${newStudent.theory === 'לא' ? 'bg-indigo-600' : 'bg-slate-800'}`}>לא</button>
                                 </div>
                             </div>
                         </div>
-                        
-                        <button className="w-full bg-blue-600 text-white p-5 rounded-[1.8rem] font-black shadow-xl mt-6" onClick={handleSaveStudent}>
-                            {isEditing ? 'עדכן פרטים' : 'שמירת תלמיד'}
-                        </button>
+                        <button className="w-full bg-blue-600 text-white p-5 rounded-[1.8rem] font-black shadow-xl mt-6 active:scale-95" onClick={handleSaveStudent}>{isEditing ? 'עדכן פרטים' : 'שמירת תלמיד'}</button>
                     </div>
                 </div>
             );
 
             if (view === 'student-history' && selectedStudent) return (
-                <div className="p-6 max-w-md mx-auto">
+                <div className="p-6 max-w-md mx-auto min-h-screen">
                     <button onClick={() => setView('student-details')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
                     <h2 className="text-2xl font-black mb-6 italic text-slate-100">שיעורים: {selectedStudent.name}</h2>
-                    <div className="space-y-4">
+                    <div className="space-y-4 text-right">
                         {allTransactions.filter(t => t.studentId === selectedStudent.id && t.type === 'lesson').map(l => (
                             <div key={l.id} className={`bg-slate-900 p-5 rounded-2xl border-r-8 flex justify-between items-center ${l.status === 'completed' ? 'border-emerald-500' : l.status === 'cancelled' ? 'border-red-500' : 'border-slate-500'}`}>
                                 <div className="text-right flex-1">
@@ -296,7 +261,7 @@
                                 </div>
                                 <div className="flex flex-col items-end gap-2">
                                     <div className="font-black text-slate-200">₪{l.amount}</div>
-                                    <button onClick={() => handleEditLesson(l)} className="text-[10px] bg-blue-900/50 text-blue-400 px-3 py-1 rounded-full border border-blue-800 font-bold">ערוך</button>
+                                    <button onClick={() => handleEditLessonAction(l)} className="text-[10px] bg-blue-900/50 text-blue-400 px-3 py-1 rounded-full border border-blue-800 font-bold">ערוך</button>
                                 </div>
                             </div>
                         ))}
@@ -305,19 +270,19 @@
             );
 
             if (view === 'student-details' && selectedStudent) return (
-                <div className="p-6 max-w-md mx-auto">
+                <div className="p-6 max-w-md mx-auto min-h-screen text-right">
                     <button onClick={() => setView('main')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
-                    <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl mb-8 text-right">
+                    <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl mb-8 relative">
+                        <button onClick={() => openEditStudent(selectedStudent)} className="absolute top-6 left-6 text-indigo-400 bg-slate-800 p-2 rounded-xl border border-slate-700">📝</button>
                         <h2 className="text-3xl font-black text-white mb-6 italic">{selectedStudent.name}</h2>
                         <div className="space-y-3 text-slate-400 text-xs mb-8">
                             <p>📞 טלפון: <span className="text-slate-200">{selectedStudent.phone || '---'}</span></p>
-                            <p>🆔 ת"ז: <span className="text-slate-200">{selectedStudent.idNum || '---'}</span></p>
                             <p>🏫 בית ספר: <span className="text-slate-200">{selectedStudent.school || '---'}</span></p>
                             <p>📋 ירוק / תיאוריה: <span className="text-slate-200">{selectedStudent.greenForm} / {selectedStudent.theory}</span></p>
                         </div>
                         <div className="flex justify-between border-t border-slate-800 pt-6">
-                            <div onClick={() => { setSelectedStudent(selectedStudent); setView('ledger-options'); }} className="text-center flex-1 border-l border-slate-800 cursor-pointer">
-                                <p className="text-[10px] text-slate-500 font-bold mb-1 underline">חוב</p>
+                            <div onClick={() => setView('ledger-options')} className="text-center flex-1 border-l border-slate-800 cursor-pointer">
+                                <p className="text-[10px] text-slate-500 font-bold mb-1 underline uppercase italic tracking-tighter">חוב ➔</p>
                                 <p className={`text-2xl font-black ${selectedStudent.balance > 0 ? 'text-red-500' : 'text-emerald-500'}`}>₪{selectedStudent.balance}</p>
                             </div>
                             <div onClick={() => setView('student-history')} className="text-center flex-1 cursor-pointer">
@@ -326,15 +291,21 @@
                             </div>
                         </div>
                     </div>
-                    <div className="flex gap-4 mb-10"><button onClick={() => { setLessonForm({dateTime: new Date().toISOString().slice(0,16), price: '200'}); setView('add-lesson'); }} className="flex-1 bg-blue-600 text-white py-4 rounded-[1.8rem] font-black shadow-lg">+ שיעור</button><button onClick={() => handleAddPayment(selectedStudent.id)} className="flex-1 bg-emerald-600 text-white py-4 rounded-[1.8rem] font-black shadow-lg">₪ תשלום</button></div>
-                    <button onClick={() => handleDeleteStudent(selectedStudent.id)} className="w-full text-red-900 text-[10px] font-bold uppercase opacity-30">מחיקת תלמיד</button>
+                    <div className="flex gap-4 mb-10"><button onClick={() => { setLessonForm({dateTime: new Date().toISOString().slice(0,16), price: '200'}); setView('add-lesson'); }} className="flex-1 bg-blue-600 text-white py-4 rounded-[1.8rem] font-black shadow-lg">+ שיעור</button><button onClick={() => { 
+                        const amount = prompt("סכום תשלום?");
+                        const method = prompt("1-מזומן, 2-אשראי, 3-ביט, 4-העברה", "3");
+                        if(amount) {
+                            window.fs.addDoc(window.fs.collection(window.db, "transactions"), { studentId: selectedStudent.id, type: 'payment', amount: Number(amount), date: new Date().toISOString(), method: method || "מזומן" });
+                            window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), { balance: window.fs.increment(-Number(amount)) });
+                            loadData();
+                        }
+                    }} className="flex-1 bg-emerald-600 text-white py-4 rounded-[1.8rem] font-black shadow-lg">₪ תשלום</button></div>
                 </div>
             );
 
             if (view === 'add-lesson') return (
-                <div className="p-6 max-w-md mx-auto text-center">
+                <div className="p-6 max-w-md mx-auto text-center min-h-screen">
                     <button onClick={() => setView('student-details')} className="mb-8 text-blue-400 font-bold self-start block">← ביטול</button>
-                    <h2 className="text-3xl font-black mb-10 text-white italic">קביעת שיעור</h2>
                     <div className="space-y-6 bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl">
                         <input className="w-full p-4 bg-slate-800 rounded-2xl border border-slate-700 outline-none text-center font-bold" type="datetime-local" value={lessonForm.dateTime} onChange={e=>setLessonForm({...lessonForm, dateTime: e.target.value})} />
                         <input className="w-full p-4 bg-slate-800 rounded-2xl border border-slate-700 outline-none text-center text-xl font-black text-emerald-400" type="number" value={lessonForm.price} onChange={e=>setLessonForm({...lessonForm, price: e.target.value})} />
@@ -347,7 +318,7 @@
                 <div className="p-4 max-w-md mx-auto pb-32 text-right">
                     <header className="flex justify-between items-center mb-8 pt-6 px-4 italic uppercase">
                         <h1 className="text-3xl font-black text-slate-100 tracking-tighter italic">Drive<span className="text-blue-500">Pro</span></h1>
-                        <div onClick={() => { setSelectedStudent(null); setView('ledger-view'); }} className="text-[10px] font-black text-slate-500 bg-slate-900 px-4 py-2 rounded-full border border-slate-800 shadow-lg">יתרה: <span className="text-emerald-500 underline font-black font-bold">₪{students.reduce((a,b)=>a+(b.balance||0),0)}</span></div>
+                        <div onClick={() => { setSelectedStudent(null); setView('ledger-view'); }} className="text-[10px] font-black text-slate-500 bg-slate-900 px-4 py-2 rounded-full border border-slate-800 shadow-lg">יתרה: <span className="text-emerald-500 font-bold">₪{students.reduce((a,b)=>a+(b.balance||0),0)}</span></div>
                     </header>
 
                     <h2 className="text-xl font-black text-slate-100 mb-4 px-2 italic text-right font-bold tracking-tighter">יומן עבודה</h2>
@@ -367,30 +338,30 @@
                                 for (let i = 0; i < first; i++) days.push(<div key={`e-${i}`} className="h-10"></div>);
                                 for (let d = 1; d <= count; d++) {
                                     const ds = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                                    const has = allTransactions.some(t => t.type === 'lesson' && t.date.startsWith(ds));
+                                    const has = allTransactions.some(t => t.type === 'lesson' && t.date?.startsWith(ds));
                                     const isToday = ds === todayStr;
                                     days.push(<div key={d} onClick={() => setSelectedDate(ds)} className={`h-10 flex flex-col items-center justify-center rounded-xl text-xs cursor-pointer active:scale-90 ${isToday ? 'ring-2 ring-yellow-500 shadow-[0_0_10px_rgba(234,179,8,0.5)]' : ''} ${selectedDate === ds ? 'bg-blue-600 text-white font-black' : 'text-slate-300'}`}>{d}{has && <div className="calendar-dot"></div>}</div>);
                                 }
                                 return days;
                             })()}
                         </div>
-                        <div className="space-y-2 border-t border-slate-800 pt-4 text-right">
-                            {allTransactions.filter(t => t.type === 'lesson' && t.date.startsWith(selectedDate)).map(l => (
-                                <div key={l.id} onClick={() => jumpToStudentHistory(l)} className={`text-xs flex justify-between p-3 rounded-2xl border border-slate-700/30 active:scale-95 ${l.status === 'cancelled' ? 'bg-red-900/30' : 'bg-slate-800/50'}`}>
-                                    <div className="text-right">
-                                        <div className={`font-bold ${l.status === 'cancelled' ? 'text-red-400' : 'text-slate-200'}`}>{l.studentName}</div>
-                                        {l.status === 'cancelled' && <div className="text-[8px] text-red-500">מבוטל: {l.cancelReason}</div>}
-                                    </div>
+                        <div className="space-y-2 border-t border-slate-800 pt-4">
+                            {allTransactions.filter(t => t.type === 'lesson' && t.date?.startsWith(selectedDate)).map(l => (
+                                <div key={l.id} onClick={() => {
+                                     const st = students.find(s => s.id === l.studentId);
+                                     if(st) { setSelectedStudent(st); setView('student-history'); }
+                                }} className={`text-xs flex justify-between p-3 rounded-2xl border border-slate-700/30 active:scale-95 ${l.status === 'cancelled' ? 'bg-red-900/30' : 'bg-slate-800/50'}`}>
+                                    <span className="font-bold text-slate-100">{l.studentName}</span>
                                     <span className="font-black text-blue-400">{new Date(l.date).toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit'})}</span>
                                 </div>
                             ))}
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 px-2">
+                    <div className="grid grid-cols-2 gap-4 px-2 text-center">
                         <button onClick={() => { setIsEditing(false); setNewStudent({name:'', idNum:'', dob:'', address:'', phone:'', school:'', greenForm:'לא', theory:'לא'}); setView('add-student'); }} className="bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex flex-col items-center gap-2 active:scale-95 uppercase"><span className="text-2xl text-blue-500">+</span> <span className="text-[10px]">הוספת תלמיד</span></button>
                         <button onClick={() => { setSearchTerm(''); setView('student-list'); }} className="bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex flex-col items-center gap-2 active:scale-95 uppercase"><span className="text-2xl text-indigo-500">👥</span> <span className="text-[10px]">רשימת תלמידים</span></button>
-                        <button onClick={() => { setSearchTerm(''); setView('select-ledger-student'); }} className="col-span-2 bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex items-center justify-center gap-4 active:scale-95 uppercase text-xs italic tracking-widest font-bold text-slate-100"><span className="text-2xl">📋</span> כרטסת תלמיד</button>
+                        <button onClick={() => { setSearchTerm(''); setView('select-ledger-student'); }} className="col-span-2 bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex items-center justify-center gap-4 active:scale-95 uppercase text-xs italic tracking-widest font-bold"><span className="text-2xl">📋</span> כרטסת תלמיד</button>
                     </div>
                 </div>
             );
