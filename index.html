@@ -8,7 +8,6 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- ספריות PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
 
@@ -31,7 +30,7 @@
         window.fs = { collection, addDoc, getDocs, query, orderBy, where, doc, updateDoc, increment, deleteDoc };
     </script>
     <style>
-        input[type="datetime-local"] { color-scheme: dark; background: #1e293b; color: white; }
+        input[type="datetime-local"], input[type="date"] { color-scheme: dark; background: #1e293b; color: white; }
         .calendar-dot { width: 4px; height: 4px; background-color: #60a5fa; border-radius: 50%; margin: 0 auto; margin-top: 2px; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
     </style>
@@ -52,8 +51,12 @@
             const [selectedStudent, setSelectedStudent] = useState(null);
             const [searchTerm, setSearchTerm] = useState('');
             const [currentMonth, setCurrentMonth] = useState(new Date());
+            const [isEditing, setIsEditing] = useState(false);
             
-            const [newStudent, setNewStudent] = useState({ name: '', idNum: '', dob: '', address: '', phone: '' });
+            const [newStudent, setNewStudent] = useState({ 
+                name: '', idNum: '', dob: '', address: '', phone: '',
+                school: '', greenForm: 'לא', theory: 'לא' 
+            });
             const [lessonForm, setLessonForm] = useState({ dateTime: '', price: '200' });
 
             useEffect(() => {
@@ -97,30 +100,16 @@
                 }
             };
 
-            // --- הפקת PDF מקצועי באנגלית ---
             const generatePDF = (student, transactions) => {
                 const doc = new jspdf.jsPDF();
                 const filtered = transactions.filter(t => t.studentId === student.id).sort((a,b) => new Date(b.date) - new Date(a.date));
-                
                 doc.setFontSize(22);
                 doc.text("DRIVEPRO STATEMENT", 10, 20);
                 doc.setFontSize(12);
                 doc.text(`Student: ${student.name}`, 10, 30);
                 doc.text(`Balance: NIS ${student.balance}`, 10, 38);
-                doc.text(`Status Date: ${new Date().toLocaleDateString()}`, 10, 46);
-
-                const rows = filtered.map(t => [
-                    new Date(t.date).toLocaleDateString(),
-                    t.type === 'lesson' ? (t.status === 'cancelled' ? 'Lesson (Cancelled)' : 'Driving Lesson') : `Payment (${t.method || 'General'})`,
-                    t.type === 'lesson' ? `+${t.amount}` : `-${t.amount}`
-                ]);
-
-                doc.autoTable({
-                    head: [['Date', 'Description', 'Amount (NIS)']],
-                    body: rows,
-                    startY: 52,
-                    headStyles: { fillColor: [63, 81, 181] }
-                });
+                const rows = filtered.map(t => [new Date(t.date).toLocaleDateString(), t.type, t.amount]);
+                doc.autoTable({ head: [['Date', 'Description', 'Amount']], body: rows, startY: 50 });
                 return doc;
             };
 
@@ -132,7 +121,7 @@
             const sendWhatsAppLedger = () => {
                 const phone = selectedStudent.phone ? selectedStudent.phone.replace(/\D/g, '') : '';
                 const finalPhone = phone.startsWith('0') ? '972' + phone.substring(1) : phone;
-                const msg = `*DrivePro Summary for ${selectedStudent.name}*%0A*Balance: ₪${selectedStudent.balance}*%0ALessons: ${selectedStudent.lessons}%0A%0A_PDF Statement is ready to be sent._`;
+                const msg = `סיכום כרטסת: ${selectedStudent.name}. יתרה: ₪${selectedStudent.balance}`;
                 window.open(`https://wa.me/${finalPhone}?text=${msg}`, '_blank');
             };
 
@@ -149,11 +138,23 @@
                 setSelectedStudent({...selectedStudent, [field]: val}); loadData();
             };
 
-            const handleAddStudent = async () => {
+            const handleSaveStudent = async () => {
                 if(!newStudent.name) return alert("שם חובה");
-                await window.fs.addDoc(window.fs.collection(window.db, "students"), { ...newStudent, balance: 0, lessons: 0 });
-                setNewStudent({ name: '', idNum: '', dob: '', address: '', phone: '' });
+                if (isEditing && selectedStudent) {
+                    await window.fs.updateDoc(window.fs.doc(window.db, "students", selectedStudent.id), newStudent);
+                } else {
+                    await window.fs.addDoc(window.fs.collection(window.db, "students"), { ...newStudent, balance: 0, lessons: 0 });
+                }
+                setNewStudent({ name: '', idNum: '', dob: '', address: '', phone: '', school: '', greenForm: 'לא', theory: 'לא' });
+                setIsEditing(false);
                 setView('main'); loadData();
+            };
+
+            const openEditStudent = (student) => {
+                setSelectedStudent(student);
+                setNewStudent({ ...student });
+                setIsEditing(true);
+                setView('add-student');
             };
 
             const handleConfirmLesson = async () => {
@@ -191,17 +192,16 @@
                 </div>
             );
 
-            // --- תצוגות כרטסת ---
             if (view === 'ledger-options' && selectedStudent) return (
                 <div className="p-6 max-w-md mx-auto min-h-screen flex flex-col justify-center text-center">
                     <button onClick={() => setView('select-ledger-student')} className="mb-10 text-blue-400 font-bold self-start">← חזרה</button>
-                    <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl mb-10">
+                    <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl">
                         <h2 className="text-3xl font-black mb-2">{selectedStudent.name}</h2>
-                        <div className="text-emerald-500 font-bold text-xl mb-8 tracking-tight">Balance: NIS {selectedStudent.balance}</div>
+                        <div className="text-emerald-500 font-bold text-xl mb-8 tracking-tight">יתרה: ₪{selectedStudent.balance}</div>
                         <div className="space-y-4">
-                            <button onClick={() => setView('ledger-view')} className="w-full bg-slate-800 text-white p-5 rounded-3xl font-black border border-slate-700 shadow-lg active:scale-95 transition-all">📂 הצג כרטסת</button>
-                            <button onClick={downloadLedger} className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black shadow-lg active:scale-95 transition-all">📥 הורד כרטסת (PDF)</button>
-                            <button onClick={sendWhatsAppLedger} className="w-full bg-emerald-600 text-white p-5 rounded-3xl font-black shadow-lg active:scale-95 transition-all">💬 שלח בוואטסאפ</button>
+                            <button onClick={() => setView('ledger-view')} className="w-full bg-slate-800 text-white p-5 rounded-3xl font-black border border-slate-700 active:scale-95 transition-all">📂 הצג כרטסת</button>
+                            <button onClick={downloadLedger} className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black active:scale-95 transition-all">📥 הורד PDF</button>
+                            <button onClick={sendWhatsAppLedger} className="w-full bg-emerald-600 text-white p-5 rounded-3xl font-black active:scale-95 transition-all">💬 שלח בוואטסאפ</button>
                         </div>
                     </div>
                 </div>
@@ -233,16 +233,55 @@
                     <input autoFocus className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none mb-6 text-right font-bold" placeholder="🔍 חפש תלמיד..." onChange={e => setSearchTerm(e.target.value)} />
                     <div className="space-y-3">
                         {students.filter(s => s.name.includes(searchTerm)).map(s => (
-                            <div key={s.id} onClick={() => { setSelectedStudent(s); setView(view === 'select-ledger-student' ? 'ledger-options' : 'student-details'); }} className="bg-slate-900 p-5 rounded-[2rem] border border-slate-800 flex justify-between items-center active:scale-95 transition-all shadow-md">
-                                <span className="font-bold text-lg">{s.name}</span>
-                                <span className={s.balance > 0 ? 'text-red-500' : 'text-emerald-500'}>₪{s.balance}</span>
+                            <div key={s.id} className="bg-slate-900 p-5 rounded-[2rem] border border-slate-800 flex justify-between items-center shadow-md">
+                                <div className="flex-1" onClick={() => { setSelectedStudent(s); setView(view === 'select-ledger-student' ? 'ledger-options' : 'student-details'); }}>
+                                    <span className="font-bold text-lg">{s.name}</span>
+                                    <span className={s.balance > 0 ? 'mr-3 text-red-500 text-sm' : 'mr-3 text-emerald-500 text-sm'}>₪{s.balance}</span>
+                                </div>
+                                <button onClick={() => openEditStudent(s)} className="bg-slate-800 p-2 rounded-xl text-indigo-400">📝</button>
                             </div>
                         ))}
                     </div>
                 </div>
             );
 
-            // --- היסטוריית שיעורים (בתוך כרטיס תלמיד) ---
+            if (view === 'add-student') return (
+                <div className="p-6 max-w-md mx-auto min-h-screen text-right pb-10">
+                    <button onClick={() => {setView('main'); setIsEditing(false);}} className="mb-8 text-blue-400 font-bold">← ביטול</button>
+                    <h2 className="text-3xl font-black mb-8 text-white italic">{isEditing ? 'עדכון פרטים' : 'תלמיד חדש'}</h2>
+                    <div className="space-y-4">
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="שם מלא *" value={newStudent.name} onChange={e=>setNewStudent({...newStudent, name: e.target.value})} />
+                        <label className="block text-[10px] text-slate-500 mr-2 font-bold uppercase tracking-widest">תאריך לידה</label>
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" type="date" value={newStudent.dob} onChange={e=>setNewStudent({...newStudent, dob: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none text-right" placeholder="טלפון" type="tel" value={newStudent.phone} onChange={e=>setNewStudent({...newStudent, phone: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="תעודת זהות" value={newStudent.idNum} onChange={e=>setNewStudent({...newStudent, idNum: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="כתובת" value={newStudent.address} onChange={e=>setNewStudent({...newStudent, address: e.target.value})} />
+                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="בית ספר" value={newStudent.school} onChange={e=>setNewStudent({...newStudent, school: e.target.value})} />
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                                <p className="text-[10px] text-slate-500 font-bold mb-2">טופס ירוק?</p>
+                                <div className="flex gap-2">
+                                    <button onClick={()=>setNewStudent({...newStudent, greenForm:'כן'})} className={`flex-1 p-2 rounded-xl font-bold ${newStudent.greenForm === 'כן' ? 'bg-indigo-600' : 'bg-slate-800'}`}>כן</button>
+                                    <button onClick={()=>setNewStudent({...newStudent, greenForm:'לא'})} className={`flex-1 p-2 rounded-xl font-bold ${newStudent.greenForm === 'לא' ? 'bg-indigo-600' : 'bg-slate-800'}`}>לא</button>
+                                </div>
+                            </div>
+                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                                <p className="text-[10px] text-slate-500 font-bold mb-2">תיאוריה?</p>
+                                <div className="flex gap-2">
+                                    <button onClick={()=>setNewStudent({...newStudent, theory:'כן'})} className={`flex-1 p-2 rounded-xl font-bold ${newStudent.theory === 'כן' ? 'bg-indigo-600' : 'bg-slate-800'}`}>כן</button>
+                                    <button onClick={()=>setNewStudent({...newStudent, theory:'לא'})} className={`flex-1 p-2 rounded-xl font-bold ${newStudent.theory === 'לא' ? 'bg-indigo-600' : 'bg-slate-800'}`}>לא</button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <button className="w-full bg-blue-600 text-white p-5 rounded-[1.8rem] font-black shadow-xl mt-6" onClick={handleSaveStudent}>
+                            {isEditing ? 'עדכן פרטים' : 'שמירת תלמיד'}
+                        </button>
+                    </div>
+                </div>
+            );
+
             if (view === 'student-history' && selectedStudent) return (
                 <div className="p-6 max-w-md mx-auto">
                     <button onClick={() => setView('student-details')} className="mb-6 text-blue-400 font-bold">← חזרה</button>
@@ -273,41 +312,29 @@
                         <div className="space-y-3 text-slate-400 text-xs mb-8">
                             <p>📞 טלפון: <span className="text-slate-200">{selectedStudent.phone || '---'}</span></p>
                             <p>🆔 ת"ז: <span className="text-slate-200">{selectedStudent.idNum || '---'}</span></p>
+                            <p>🏫 בית ספר: <span className="text-slate-200">{selectedStudent.school || '---'}</span></p>
+                            <p>📋 ירוק / תיאוריה: <span className="text-slate-200">{selectedStudent.greenForm} / {selectedStudent.theory}</span></p>
                         </div>
                         <div className="flex justify-between border-t border-slate-800 pt-6">
                             <div onClick={() => { setSelectedStudent(selectedStudent); setView('ledger-options'); }} className="text-center flex-1 border-l border-slate-800 cursor-pointer">
-                                <p className="text-[10px] text-slate-500 font-bold mb-1 underline">חוב (כרטסת)</p>
+                                <p className="text-[10px] text-slate-500 font-bold mb-1 underline">חוב</p>
                                 <p className={`text-2xl font-black ${selectedStudent.balance > 0 ? 'text-red-500' : 'text-emerald-500'}`}>₪{selectedStudent.balance}</p>
                             </div>
                             <div onClick={() => setView('student-history')} className="text-center flex-1 cursor-pointer">
-                                <p className="text-[10px] text-blue-500 font-black mb-1 underline uppercase">שיעורים ➔</p>
-                                <p className="text-2xl font-black text-slate-100">{selectedStudent.lessons}</p>
+                                <p className="text-[10px] text-blue-500 font-bold mb-1 underline uppercase italic tracking-tighter">שיעורים ➔</p>
+                                <p className="text-2xl font-black text-slate-100">{selectedStudent.lessons || 0}</p>
                             </div>
                         </div>
                     </div>
-                    <div className="flex gap-4 mb-10">
-                        <button onClick={() => { setLessonForm({dateTime: new Date().toISOString().slice(0,16), price: '200'}); setView('add-lesson'); }} className="flex-1 bg-blue-600 text-white py-4 rounded-[1.8rem] font-black">+ שיעור</button>
-                        <button onClick={() => handleAddPayment(selectedStudent.id)} className="flex-1 bg-emerald-600 text-white py-4 rounded-[1.8rem] font-black">₪ תשלום</button>
-                    </div>
+                    <div className="flex gap-4 mb-10"><button onClick={() => { setLessonForm({dateTime: new Date().toISOString().slice(0,16), price: '200'}); setView('add-lesson'); }} className="flex-1 bg-blue-600 text-white py-4 rounded-[1.8rem] font-black shadow-lg">+ שיעור</button><button onClick={() => handleAddPayment(selectedStudent.id)} className="flex-1 bg-emerald-600 text-white py-4 rounded-[1.8rem] font-black shadow-lg">₪ תשלום</button></div>
                     <button onClick={() => handleDeleteStudent(selectedStudent.id)} className="w-full text-red-900 text-[10px] font-bold uppercase opacity-30">מחיקת תלמיד</button>
-                </div>
-            );
-
-            if (view === 'add-student') return (
-                <div className="p-6 max-w-md mx-auto min-h-screen text-right">
-                    <button onClick={() => setView('main')} className="mb-8 text-blue-400 font-bold">← ביטול</button>
-                    <div className="space-y-4">
-                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none" placeholder="שם מלא *" value={newStudent.name} onChange={e=>setNewStudent({...newStudent, name: e.target.value})} />
-                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none text-right" type="date" value={newStudent.dob} onChange={e=>setNewStudent({...newStudent, dob: e.target.value})} />
-                        <input className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl outline-none text-right" placeholder="טלפון" type="tel" value={newStudent.phone} onChange={e=>setNewStudent({...newStudent, phone: e.target.value})} />
-                        <button className="w-full bg-blue-600 text-white p-5 rounded-[1.8rem] font-black" onClick={handleAddStudent}>שמירת תלמיד</button>
-                    </div>
                 </div>
             );
 
             if (view === 'add-lesson') return (
                 <div className="p-6 max-w-md mx-auto text-center">
                     <button onClick={() => setView('student-details')} className="mb-8 text-blue-400 font-bold self-start block">← ביטול</button>
+                    <h2 className="text-3xl font-black mb-10 text-white italic">קביעת שיעור</h2>
                     <div className="space-y-6 bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl">
                         <input className="w-full p-4 bg-slate-800 rounded-2xl border border-slate-700 outline-none text-center font-bold" type="datetime-local" value={lessonForm.dateTime} onChange={e=>setLessonForm({...lessonForm, dateTime: e.target.value})} />
                         <input className="w-full p-4 bg-slate-800 rounded-2xl border border-slate-700 outline-none text-center text-xl font-black text-emerald-400" type="number" value={lessonForm.price} onChange={e=>setLessonForm({...lessonForm, price: e.target.value})} />
@@ -319,15 +346,15 @@
             return (
                 <div className="p-4 max-w-md mx-auto pb-32 text-right">
                     <header className="flex justify-between items-center mb-8 pt-6 px-4 italic uppercase">
-                        <h1 className="text-3xl font-black text-slate-100 tracking-tighter">Drive<span className="text-blue-500">Pro</span></h1>
-                        <div className="text-[10px] font-black text-slate-500 bg-slate-900 px-4 py-2 rounded-full border border-slate-800 shadow-lg">יתרה: <span className="text-emerald-500">₪{students.reduce((a,b)=>a+(b.balance||0),0)}</span></div>
+                        <h1 className="text-3xl font-black text-slate-100 tracking-tighter italic">Drive<span className="text-blue-500">Pro</span></h1>
+                        <div onClick={() => { setSelectedStudent(null); setView('ledger-view'); }} className="text-[10px] font-black text-slate-500 bg-slate-900 px-4 py-2 rounded-full border border-slate-800 shadow-lg">יתרה: <span className="text-emerald-500 underline font-black font-bold">₪{students.reduce((a,b)=>a+(b.balance||0),0)}</span></div>
                     </header>
 
                     <h2 className="text-xl font-black text-slate-100 mb-4 px-2 italic text-right font-bold tracking-tighter">יומן עבודה</h2>
                     <div className="bg-slate-900 p-5 rounded-[2.5rem] mb-8 border border-slate-800 shadow-2xl">
                         <div className="flex justify-between items-center mb-4 px-2">
                             <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}>◀</button>
-                            <h3 className="font-black italic text-xs uppercase text-slate-100">{new Intl.DateTimeFormat('he-IL', { month: 'long', year: 'numeric' }).format(currentMonth)}</h3>
+                            <h3 className="font-black italic text-xs uppercase text-slate-100 font-bold">{new Intl.DateTimeFormat('he-IL', { month: 'long', year: 'numeric' }).format(currentMonth)}</h3>
                             <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}>▶</button>
                         </div>
                         <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-600 mb-2 italic"><div>א'</div><div>ב'</div><div>ג'</div><div>ד'</div><div>ה'</div><div>ו'</div><div>ש'</div></div>
@@ -342,7 +369,7 @@
                                     const ds = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
                                     const has = allTransactions.some(t => t.type === 'lesson' && t.date.startsWith(ds));
                                     const isToday = ds === todayStr;
-                                    days.push(<div key={d} onClick={() => setSelectedDate(ds)} className={`h-10 flex flex-col items-center justify-center rounded-xl text-xs cursor-pointer active:scale-90 ${isToday ? 'ring-2 ring-yellow-500' : ''} ${selectedDate === ds ? 'bg-blue-600 text-white font-black' : 'text-slate-300'}`}>{d}{has && <div className="calendar-dot"></div>}</div>);
+                                    days.push(<div key={d} onClick={() => setSelectedDate(ds)} className={`h-10 flex flex-col items-center justify-center rounded-xl text-xs cursor-pointer active:scale-90 ${isToday ? 'ring-2 ring-yellow-500 shadow-[0_0_10px_rgba(234,179,8,0.5)]' : ''} ${selectedDate === ds ? 'bg-blue-600 text-white font-black' : 'text-slate-300'}`}>{d}{has && <div className="calendar-dot"></div>}</div>);
                                 }
                                 return days;
                             })()}
@@ -361,7 +388,7 @@
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 px-2">
-                        <button onClick={() => setView('add-student')} className="bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex flex-col items-center gap-2 active:scale-95 uppercase"><span className="text-2xl text-blue-500">+</span> <span className="text-[10px]">הוספת תלמיד</span></button>
+                        <button onClick={() => { setIsEditing(false); setNewStudent({name:'', idNum:'', dob:'', address:'', phone:'', school:'', greenForm:'לא', theory:'לא'}); setView('add-student'); }} className="bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex flex-col items-center gap-2 active:scale-95 uppercase"><span className="text-2xl text-blue-500">+</span> <span className="text-[10px]">הוספת תלמיד</span></button>
                         <button onClick={() => { setSearchTerm(''); setView('student-list'); }} className="bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex flex-col items-center gap-2 active:scale-95 uppercase"><span className="text-2xl text-indigo-500">👥</span> <span className="text-[10px]">רשימת תלמידים</span></button>
                         <button onClick={() => { setSearchTerm(''); setView('select-ledger-student'); }} className="col-span-2 bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 font-black shadow-xl flex items-center justify-center gap-4 active:scale-95 uppercase text-xs italic tracking-widest font-bold text-slate-100"><span className="text-2xl">📋</span> כרטסת תלמיד</button>
                     </div>
